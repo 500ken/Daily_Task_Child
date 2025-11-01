@@ -1,162 +1,62 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🌈 小學生每日任務 🌟</title>
-<style>
-  body {
-    font-family: "Comic Sans MS", "Noto Sans TC", cursive;
-    background: linear-gradient(to bottom right, #ffe6f2, #e6f7ff);
-    color: #555;
-    margin: 0;
-    padding: 20px;
-  }
-
-  h1 {
-    text-align: center;
-    font-size: 2em;
-    color: #ff66b2;
-    margin-bottom: 10px;
-  }
-
-  .task-list {
-    max-width: 400px;
-    margin: 0 auto;
-    background: white;
-    padding: 20px;
-    border-radius: 20px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-  }
-
-  .task {
-    display: flex;
-    align-items: center;
-    background: #fffafc;
-    margin: 10px 0;
-    padding: 10px;
-    border-radius: 15px;
-    transition: 0.3s;
-  }
-
-  .task:hover { background: #fff0f7; }
-
-  input[type="checkbox"] {
-    width: 22px;
-    height: 22px;
-    accent-color: #ff99cc;
-    margin-right: 10px;
-  }
-
-  label {
-    flex: 1;
-    font-size: 1.1em;
-  }
-
-  .done { text-decoration: line-through; color: #aaa; }
-
-  .points {
-    text-align: center;
-    font-size: 1.3em;
-    margin: 15px 0;
-    color: #ff6699;
-  }
-
-  footer {
-    text-align: center;
-    margin-top: 20px;
-    color: #888;
-    font-size: 0.9em;
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>每日任務選擇</title>
+  <style>
+    body {
+      font-family: "Comic Sans MS", sans-serif;
+      background: linear-gradient(135deg, #FFDEE9, #B5FFFC);
+      text-align: center;
+      padding: 50px;
+    }
+    h1 {
+      color: #ff69b4;
+      font-size: 2.2em;
+    }
+    .card {
+      display: inline-block;
+      background: white;
+      border-radius: 20px;
+      box-shadow: 0 5px 10px rgba(0,0,0,0.1);
+      width: 200px;
+      padding: 20px;
+      margin: 20px;
+      transition: 0.3s;
+    }
+    .card:hover {
+      transform: scale(1.05);
+      box-shadow: 0 8px 15px rgba(0,0,0,0.2);
+    }
+    .avatar {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      margin-bottom: 10px;
+      border: 3px solid #ffb6c1;
+    }
+    a {
+      text-decoration: none;
+      color: #333;
+      font-weight: bold;
+    }
+  </style>
 </head>
 <body>
+  <h1>🌟 選擇今天的小幫手 🌟</h1>
 
-<h1>🌟 我的每日任務 🌈</h1>
+  <div class="card">
+    <img src="https://cdn-icons-png.flaticon.com/512/4140/4140048.png" class="avatar" alt="Kid1">
+    <h3>QQ</h3>
+    <a href="kid1.html">前往任務 🐰</a>
+  </div>
 
-<div class="points">
-  本週集點：<span id="points">0</span> / 7 ⭐
-</div>
-
-<div class="task-list">
-  <div class="task"><input type="checkbox" id="task1"><label for="task1">🪥 刷牙洗臉</label></div>
-  <div class="task"><input type="checkbox" id="task2"><label for="task2">📚 完成功課</label></div>
-  <div class="task"><input type="checkbox" id="task3"><label for="task3">🍎 吃蔬菜水果</label></div>
-  <div class="task"><input type="checkbox" id="task4"><label for="task4">🏃‍♀️ 運動 10 分鐘</label></div>
-  <div class="task"><input type="checkbox" id="task5"><label for="task5">💤 準時上床睡覺</label></div>
-</div>
-
-<footer>💖 每天完成任務就能集 1 點，集滿 7 點可獲得獎勵 🌟</footer>
-
-<script>
-  const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-  const today = new Date();
-  const todayDate = today.toLocaleDateString(); 
-  const weekNumber = getWeekNumber(today); // 本週編號
-  const lastDate = localStorage.getItem('lastCheckedDate');
-  const lastWeek = localStorage.getItem('lastWeek');
-
-  // 若跨天，清除勾選
-  if (lastDate !== todayDate) {
-    checkboxes.forEach(cb => localStorage.removeItem(cb.id));
-    localStorage.setItem('lastCheckedDate', todayDate);
-  }
-
-  // 若跨週，重置集點
-  if (lastWeek !== weekNumber.toString()) {
-    localStorage.setItem('points', 0);
-    localStorage.setItem('lastWeek', weekNumber);
-  }
-
-  // 載入集點
-  let points = parseInt(localStorage.getItem('points') || '0');
-  updatePointsDisplay();
-
-  // 初始化任務狀態
-  checkboxes.forEach(cb => {
-    const saved = localStorage.getItem(cb.id);
-    if (saved === 'true') cb.checked = true;
-    updateLabel(cb);
-
-    cb.addEventListener('change', () => {
-      localStorage.setItem(cb.id, cb.checked);
-      updateLabel(cb);
-      checkAllDone();
-    });
-  });
-
-  // 檢查是否全部完成
-  function checkAllDone() {
-    const allDone = Array.from(checkboxes).every(cb => cb.checked);
-    const doneToday = localStorage.getItem('gotPoint_' + todayDate);
-
-    if (allDone && !doneToday) {
-      points++;
-      if (points > 7) points = 7;
-      localStorage.setItem('points', points);
-      localStorage.setItem('gotPoint_' + todayDate, true);
-      updatePointsDisplay();
-      alert('🎉 太棒了！今天集到 1 點 ⭐');
-    }
-  }
-
-  function updateLabel(cb) {
-    const label = document.querySelector(`label[for="${cb.id}"]`);
-    if (cb.checked) label.classList.add('done');
-    else label.classList.remove('done');
-  }
-
-  function updatePointsDisplay() {
-    document.getElementById('points').textContent = points;
-  }
-
-  // 取得目前是第幾週
-  function getWeekNumber(d) {
-    const oneJan = new Date(d.getFullYear(), 0, 1);
-    const numberOfDays = Math.floor((d - oneJan) / (24 * 60 * 60 * 1000));
-    return Math.ceil((d.getDay() + 1 + numberOfDays) / 7);
-  }
-</script>
+  <div class="card">
+    <img src="https://cdn-icons-png.flaticon.com/512/4140/4140051.png" class="avatar" alt="Kid2">
+    <h3>壯壯</h3>
+    <a href="kid2.html">前往任務 🐻</a>
+  </div>
 
 </body>
 </html>
