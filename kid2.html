@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>熊熊的每日任務</title>
+<title>小熊的每日任務</title>
 <style>
   body {
     font-family: "Comic Sans MS", sans-serif;
-    background: linear-gradient(135deg, #FDEBEB, #FFC3A0);
+    background: linear-gradient(135deg, #FFF1EB, #ACE0F9);
     text-align: center;
     padding: 20px;
   }
   h1 {
-    color: #ff69b4;
+    color: #ff8c00;
   }
   .task {
     background: #fff;
@@ -30,35 +30,37 @@
   .points {
     margin-top: 20px;
     font-size: 1.3em;
-    color: #e75480;
+    color: #ff6347;
   }
   button {
-    margin-top: 20px;
+    margin-top: 15px;
     padding: 10px 20px;
-    background: #ffa6c9;
+    background: #ffb347;
     border: none;
     border-radius: 10px;
     cursor: pointer;
     font-size: 1em;
   }
   button:hover {
-    background: #ffb6c1;
+    background: #ffcc33;
   }
 </style>
 </head>
 <body>
 
-<h1>🐻 熊熊的每日任務</h1>
+<h1>🐻 小熊的每日任務</h1>
 
-<div class="task"><input type="checkbox" class="taskCheck">吃蔬菜</div>
-<div class="task"><input type="checkbox" class="taskCheck">幫忙疊衣服</div>
-<div class="task"><input type="checkbox" class="taskCheck">練字 10 分鐘</div>
-<div class="task"><input type="checkbox" class="taskCheck">寫功課</div>
+<div class="task"><input type="checkbox" class="taskCheck">刷牙</div>
+<div class="task"><input type="checkbox" class="taskCheck">整理書包</div>
+<div class="task"><input type="checkbox" class="taskCheck">幫忙收玩具</div>
+<div class="task"><input type="checkbox" class="taskCheck">閱讀 10 分鐘</div>
 
 <div class="points">⭐ 今日星星：<span id="todayPoints">0</span></div>
 <div class="points">🌈 本週累積：<span id="weeklyPoints">0</span>/7</div>
 
 <button onclick="resetDay()">🔄 重置今天</button>
+<br>
+<button onclick="goHome()">🏠 回首頁</button>
 
 <script>
   const today = new Date().toDateString();
@@ -84,7 +86,7 @@
         localStorage.setItem(weekKey, weekly);
         todayPoints.textContent = 1;
         weeklyPoints.textContent = weekly;
-        alert("🌟 熊熊好棒！今天也完成全部任務！");
+        alert("🎉 小熊太棒了！獲得 1 顆星星 ⭐");
         taskChecks.forEach(c => c.disabled = true);
       }
     });
@@ -101,7 +103,10 @@
     todayPoints.textContent = 0;
   }
 
-  // 每週一自動重置週星星
+  function goHome() {
+    window.location.href = "index.html";
+  }
+
   const todayDate = new Date();
   if (todayDate.getDay() === 1 && !localStorage.getItem('kid2_weekReset_' + todayDate.getFullYear() + todayDate.getMonth() + todayDate.getDate())) {
     localStorage.setItem(weekKey, 0);
