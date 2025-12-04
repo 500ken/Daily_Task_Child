@@ -160,7 +160,7 @@
         let appData = {};
         let selectedSibling = null;
 
-                // 硬編碼的預設任務列表 (分別為姊姊和弟弟)
+        // 硬編碼的預設任務列表 (分別為姊姊和弟弟)
         const DEFAULT_CHORES_CONFIGS = {
             sister: [
                 { name: "整理房間 (姊)", points: 10 },
@@ -230,10 +230,10 @@
             if (dataString) {
                 appData = JSON.parse(dataString);
             } else {
-                // 初始化預設結構
+                // 初始化預設結構 - 修正：傳入使用者 ID
                 appData = {
-                    sister: initializeSiblingDefaultData(),
-                    brother: initializeSiblingDefaultData()
+                    sister: initializeSiblingDefaultData('sister'),
+                    brother: initializeSiblingDefaultData('brother')
                 };
                 saveAppData();
                 showMessage("已建立新的本地儲存資料。", 'info');
@@ -249,15 +249,18 @@
 
         /**
          * 取得單一孩子的預設資料結構。
+         * @param {string} siblingId - 孩子的 ID ('sister' 或 'brother')
+         * 修正：加入 siblingId 參數，並使用 DEFAULT_CHORES_CONFIGS[siblingId]
          */
-        function initializeSiblingDefaultData() {
+        function initializeSiblingDefaultData(siblingId) {
+            const choresConfig = DEFAULT_CHORES_CONFIGS[siblingId] || []; // 獲取正確的任務清單
             return {
                 points: 0,
                 smallMedals: 0,
                 mediumMedals: 0,
                 largeMedals: 0,
                 // 為每個任務分配一個穩定的 ID
-                chores: DEFAULT_CHORES_CONFIG.map((c, index) => ({ 
+                chores: choresConfig.map((c, index) => ({ 
                     id: index + 1, 
                     name: c.name, 
                     points: c.points, 
@@ -274,6 +277,18 @@
             const today = new Date().toISOString().split('T')[0];
             const siblingData = appData[siblingId];
             
+            // 修正：檢查任務列表是否與當前配置不同，如果不同則用新配置覆蓋
+            const currentConfigChores = DEFAULT_CHORES_CONFIGS[siblingId];
+            if (siblingData.chores.length !== currentConfigChores.length || 
+                siblingData.chores.some((c, i) => c.name !== currentConfigChores[i].name)) {
+                
+                console.log(`偵測到任務配置更新，重置 ${siblingId} 的任務列表...`);
+                appData[siblingId] = initializeSiblingDefaultData(siblingId);
+                saveAppData();
+                showMessage(`${SIBLING_NAMES[siblingId]} 的任務配置已更新。`, 'info');
+                return; 
+            }
+
             if (siblingData.lastUpdated !== today) {
                 console.log(`偵測到新的一天，重置 ${siblingId} 的任務...`);
                 
