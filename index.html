@@ -99,10 +99,17 @@
                                 <span id="small-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
                             </div>
                         </div>
-                        <button data-type="small" data-cost="50" 
-                                class="redeem-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
-                            兌換
-                        </button>
+                        <!-- 按鈕組 (兌換 + 使用) -->
+                        <div class="flex items-center space-x-2">
+                            <button data-type="small" data-cost="50" 
+                                    class="redeem-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                兌換 (50 點)
+                            </button>
+                            <button data-type="small"
+                                    class="deduct-medal-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                使用 (扣除)
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 中獎章 -->
@@ -114,10 +121,17 @@
                                 <span id="medium-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
                             </div>
                         </div>
-                        <button data-type="medium" data-cost="100" 
-                                class="redeem-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
-                            兌換
-                        </button>
+                        <!-- 按鈕組 (兌換 + 使用) -->
+                        <div class="flex items-center space-x-2">
+                            <button data-type="medium" data-cost="100" 
+                                    class="redeem-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                兌換 (100 點)
+                            </button>
+                            <button data-type="medium"
+                                    class="deduct-medal-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                使用 (扣除)
+                            </button>
+                        </div>
                     </div>
                     
                     <!-- 大獎章 -->
@@ -129,10 +143,17 @@
                                 <span id="large-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
                             </div>
                         </div>
-                        <button data-type="large" data-cost="200" 
-                                class="redeem-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
-                            兌換
-                        </button>
+                        <!-- 按鈕組 (兌換 + 使用) -->
+                        <div class="flex items-center space-x-2">
+                            <button data-type="large" data-cost="200" 
+                                    class="redeem-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                兌換 (200 點)
+                            </button>
+                            <button data-type="large"
+                                    class="deduct-medal-btn bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
+                                使用 (扣除)
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -250,7 +271,6 @@
         /**
          * 取得單一孩子的預設資料結構。
          * @param {string} siblingId - 孩子的 ID ('sister' 或 'brother')
-         * 修正：加入 siblingId 參數，並使用 DEFAULT_CHORES_CONFIGS[siblingId]
          */
         function initializeSiblingDefaultData(siblingId) {
             const choresConfig = DEFAULT_CHORES_CONFIGS[siblingId] || []; // 獲取正確的任務清單
@@ -271,13 +291,13 @@
         }
 
         /**
-         * 檢查並重置每日任務。
+         * 檢查並重置每日任務，並檢查任務配置是否更新。
          */
         function checkAndResetChores(siblingId) {
             const today = new Date().toISOString().split('T')[0];
             const siblingData = appData[siblingId];
             
-            // 修正：檢查任務列表是否與當前配置不同，如果不同則用新配置覆蓋
+            // 檢查任務列表是否與當前配置不同，如果不同則用新配置覆蓋
             const currentConfigChores = DEFAULT_CHORES_CONFIGS[siblingId];
             if (siblingData.chores.length !== currentConfigChores.length || 
                 siblingData.chores.some((c, i) => c.name !== currentConfigChores[i].name)) {
@@ -370,7 +390,7 @@
             });
         }
         
-        // 渲染點數、獎章狀態並啟用/禁用兌換按鈕
+        // 渲染點數、獎章狀態並啟用/禁用兌換/扣除按鈕
         function renderMedalState(data) {
             const currentPoints = data.points || 0;
             const medals = { 
@@ -394,24 +414,31 @@
 
             medalTypes.forEach(medal => {
                 const countElement = document.getElementById(medal.countId);
-                const button = document.querySelector(`.redeem-btn[data-type="${medal.id}"]`);
+                const redeemButton = document.querySelector(`.redeem-btn[data-type="${medal.id}"]`);
+                const deductButton = document.querySelector(`.deduct-medal-btn[data-type="${medal.id}"]`); // 找到扣除按鈕
                 
                 // 渲染數量
                 const count = medals[`${medal.id}Medals`] || 0;
                 countElement.textContent = `擁有: ${count} 個`;
                 
-                // 啟用/禁用按鈕
-                if (button) {
+                // 啟用/禁用兌換按鈕
+                if (redeemButton) {
                     const isRedeemable = currentPoints >= medal.cost;
-                    button.disabled = !isRedeemable;
-                    button.textContent = isRedeemable ? '兌換' : `點數不足 (${medal.cost} 點)`;
+                    redeemButton.disabled = !isRedeemable;
+                    redeemButton.textContent = isRedeemable ? `兌換 (${medal.cost} 點)` : `點數不足`;
+                }
+
+                // 啟用/禁用扣除按鈕 (新增)
+                if (deductButton) {
+                    const hasMedalsToDeduct = count > 0;
+                    deductButton.disabled = !hasMedalsToDeduct;
                 }
             });
         }
         
         // --- 5. 事件處理器與數據更新 ---
 
-        // 任務完成邏輯
+        // 任務完成邏輯 (不變)
         function completeChore(choreId, points) {
             const siblingData = appData[selectedSibling];
             
@@ -427,7 +454,7 @@
             }
         }
 
-        // 兌換獎章邏輯
+        // 兌換獎章邏輯 (不變)
         function redeemMedal(medalType, cost) {
             const siblingData = appData[selectedSibling];
             const medalKey = `${medalType}Medals`;
@@ -446,6 +473,27 @@
             const medalNameMap = { 'small': '小', 'medium': '中', 'large': '大' };
             const medalName = medalNameMap[medalType] || '未知';
             showMessage(`成功兌換 1 個${medalName}獎章！花費 ${cost} 點。`);
+        }
+        
+        // 扣除已兌換獎章邏輯 (新增)
+        function deductMedal(medalType) {
+            const siblingData = appData[selectedSibling];
+            const medalKey = `${medalType}Medals`;
+
+            if (siblingData[medalKey] <= 0) {
+                // 這條訊息通常不會顯示，因為按鈕會被禁用
+                showMessage(`沒有 ${SIBLING_NAMES[selectedSibling]} 可供使用的獎章了！`, 'error');
+                return;
+            }
+
+            siblingData[medalKey] -= 1; // 扣除一個獎章
+
+            saveAppData(); // 儲存變更
+            renderSiblingData(siblingData); // 重新渲染 UI
+            
+            const medalNameMap = { 'small': '小', 'medium': '中', 'large': '大' };
+            const medalName = medalNameMap[medalType] || '未知';
+            showMessage(`成功使用 1 個${medalName}獎章，已從 ${SIBLING_NAMES[selectedSibling]} 的庫存扣除。`);
         }
 
 
@@ -475,6 +523,16 @@
                 const cost = parseInt(button.dataset.cost, 10);
                 if (!button.disabled) {
                     redeemMedal(medalType, cost);
+                }
+                return;
+            }
+            
+            // --- 處理獎章使用/扣除 (新增) ---
+            if (button.classList.contains('deduct-medal-btn')) {
+                const medalType = button.dataset.type;
+                // 依賴 renderMedalState 禁用按鈕，但為安全起見，邏輯中也有檢查
+                if (!button.disabled) { 
+                    deductMedal(medalType);
                 }
                 return;
             }
