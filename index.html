@@ -35,11 +35,13 @@
         }
         /* 確保動畫效果在 Tailwind 之外也能順利運行 */
         @keyframes pulse-once {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(1.05); }
+            0% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7); }
+            50% { opacity: 0.9; transform: scale(1.03); box-shadow: 0 0 10px 10px rgba(251, 191, 36, 0.4); }
+            100% { opacity: 1; transform: scale(1); box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); }
         }
-        .animate-pulse-once {
-            animation: pulse-once 1.5s ease-in-out 1;
+        /* 更改為一個通用的類別，由 React 控制啟動 */
+        .animate-pulse-once-controlled {
+            animation: pulse-once 1.5s cubic-bezier(0.4, 0, 0.6, 1) 1;
         }
     </style>
 </head>
@@ -224,8 +226,9 @@
         const TaskView = ({ siblingId, setSelectedSibling, db, setError, getCheckinDocRef }) => {
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [isModalOpen, setIsModalOpen] = useState(false);
-            const [modalContent, setModalContent] = useState({});
+            const [isModalOpen, setIsModalOpen] = useState(false); // 保持用於可能的錯誤訊息
+            const [modalContent, setModalContent] = useState({}); // 保持用於可能的錯誤訊息
+            const [pulseTrigger, setPulseTrigger] = useState(0); // 新增：用於觸發點數脈衝動畫
 
             const siblingName = siblingId === 'sister' ? '姊姊' : '弟弟';
             const docRef = db ? getCheckinDocRef(siblingId) : null;
@@ -323,19 +326,14 @@
                         });
                     });
                     
-                    setModalContent({
-                        title: "任務完成！",
-                        message: `恭喜 ${siblingName} 完成任務，獲得 ${points} 點！`,
-                        icon: "🎉",
-                        color: "bg-green-500",
-                    });
-                    setIsModalOpen(true);
+                    // 任務成功完成，不彈出視窗，觸發點數脈衝動畫
+                    setPulseTrigger(p => p + 1); 
 
                 } catch (e) {
                     console.error("Task completion failed:", e);
                     setError(`任務更新失敗: ${e.message}`);
                 }
-            }, [data, docRef, siblingName, setError, db]);
+            }, [data, docRef, db]);
 
             // 處理手動調整點數
             const handleManualAdjust = useCallback(async (amount, type) => {
@@ -355,20 +353,16 @@
                         transaction.update(docRef, {
                             totalPoints: newTotalPoints,
                         });
+                        
+                        // 成功調整點數，不彈出視窗，觸發點數脈衝動畫
+                        setPulseTrigger(p => p + 1);
 
-                        setModalContent({
-                            title: type === 'add' ? "點數增加" : "點數扣除",
-                            message: `${siblingName} 的點數已更新: ${oldPoints} -> ${newTotalPoints} (${type === 'add' ? '+' : '-'} ${amount} 點)`,
-                            icon: type === 'add' ? "➕" : "➖",
-                            color: type === 'add' ? "bg-blue-500" : "bg-red-500",
-                        });
-                        setIsModalOpen(true);
                     });
                 } catch (e) {
                     console.error("Manual adjustment failed:", e);
                     setError(`手動調整點數失敗: ${e.message}`);
                 }
-            }, [data, docRef, siblingName, setError, db]);
+            }, [data, docRef, db]);
 
 
             if (loading || !data) {
@@ -396,8 +390,8 @@
                         </button>
                     </div>
 
-                    {/* 總點數顯示區 */}
-                    <PointsSummary data={data} />
+                    {/* 總點數顯示區：傳入 pulseTrigger */}
+                    <PointsSummary data={data} pulseTrigger={pulseTrigger} />
 
                     {/* 每日任務區 */}
                     <DailyTasks 
@@ -411,7 +405,7 @@
                         handleManualAdjust={handleManualAdjust} 
                     />
                     
-                    {/* 自定義 Modal 訊息 */}
+                    {/* 自定義 Modal 訊息 (保留用於錯誤訊息或其他用途) */}
                     <CustomModal 
                         isOpen={isModalOpen} 
                         onClose={() => setIsModalOpen(false)} 
@@ -459,12 +453,30 @@
             </div>
         );
 
-        // --- 子組件：總點數總結 ---
-        const PointsSummary = ({ data }) => {
+        // --- 子組件：總點數總結 (新增動畫邏輯) ---
+        const PointsSummary = ({ data, pulseTrigger }) => {
+            const [animateClass, setAnimateClass] = useState('');
             const currentMonth = new Date().toLocaleString('zh-TW', { year: 'numeric', month: 'long' });
 
+            // Effect to trigger and reset the pulse animation
+            useEffect(() => {
+                // 只有在 pulseTrigger 變化時才執行
+                if (pulseTrigger > 0) {
+                    // 1. 應用動畫類別
+                    setAnimateClass('animate-pulse-once-controlled');
+                    
+                    // 2. 在動畫結束後移除類別 (動畫持續 1.5s)
+                    const timer = setTimeout(() => {
+                        setAnimateClass('');
+                    }, 1500);
+
+                    return () => clearTimeout(timer);
+                }
+            }, [pulseTrigger]);
+
+
             return (
-                <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-amber-500">
+                <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-amber-500 transition-all duration-300">
                     <h3 className="text-2xl font-bold text-amber-700 border-b pb-3 mb-4">
                         當前累積總點數
                     </h3>
@@ -472,7 +484,8 @@
                         <p className="text-lg font-medium text-gray-700">
                             總積分：
                         </p>
-                        <p className="text-6xl font-extrabold text-amber-600 animate-pulse-once">
+                        {/* 應用動態動畫類別 */}
+                        <p className={`text-6xl font-extrabold text-amber-600 ${animateClass}`}>
                             {data.totalPoints} 點
                         </p>
                         <p className="text-sm text-gray-500 mt-3">
@@ -538,7 +551,7 @@
         };
 
 
-        // --- 子組件：自定義 Modal (取代 alert) ---
+        // --- 子組件：自定義 Modal (取代 alert, 僅用於錯誤或其他非點數調整的提示) ---
         const CustomModal = ({ isOpen, onClose, content }) => {
             if (!isOpen) return null;
 
