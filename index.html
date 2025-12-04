@@ -1,558 +1,532 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>兒童任務集點 App (本地儲存)</title>
-    <!-- 載入 Tailwind CSS CDN，實現快速美觀的響應式設計 -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* 使用 Inter 字體 */
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-            min-height: 100vh;
-        }
-        /* 隱藏原生滾動條 */
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none;
-        }
-        .hide-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
-        }
-        /* 點數更新時的視覺回饋 */
-        .points-display.scale-105 {
-            transform: scale(1.05);
-            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.5), 0 4px 6px -2px rgba(99, 102, 41, 0.3);
-        }
-    </style>
-</head>
-<body class="bg-gray-50 flex flex-col items-center p-4">
+import React, { useState, useEffect, useCallback } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getFirestore, doc, onSnapshot, setDoc, 
+  collection, runTransaction 
+} from 'firebase/firestore';
 
-    <!-- 💡 配置狀態診斷區塊 (已移除 Firebase 診斷) -->
-    <div id="config-status" class="w-full max-w-xl mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-lg">
-        <p class="font-bold">✨ 資料儲存方式：本地儲存 (LocalStorage)</p>
-        <p class="text-sm">⚠️ **資料僅儲存在您目前的瀏覽器中，無法跨裝置同步。**</p>
-    </div>
-    <!-- 💡 診斷區塊結束 -->
+// --- 全域變數和 Firebase 初始化 ---
 
-    <!-- 主應用程式容器 -->
-    <div id="app-container" class="w-full max-w-xl bg-white shadow-xl rounded-2xl p-6 md:p-8 space-y-6">
-        
-        <!-- 應用程式標題和使用者 ID 區塊 -->
-        <header class="text-center space-y-2">
-            <h1 class="text-3xl font-bold text-indigo-700">🏆 兒童任務集點 App</h1>
-            <div class="text-xs text-gray-500 truncate">
-                儲存金鑰: <span id="storage-key-display" class="font-mono bg-gray-100 px-2 py-1 rounded">CHORE_APP_DATA</span>
-            </div>
-            <p class="text-sm text-gray-400">點數與進度已儲存於您的瀏覽器中</p>
-        </header>
+// 應用程式 ID (由 Canvas 環境提供)
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chore-tracker-app';
+// Firebase 設定 (由 Canvas 環境提供)
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+// 初始認證令牌 (由 Canvas 環境提供)
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        <!-- Home View: 選擇使用者介面 -->
-        <div id="home-view" class="space-y-6 pt-4">
-            <h2 class="text-2xl font-bold text-gray-700 text-center">請選擇使用者</h2>
-            <p id="home-date-display" class="text-base text-indigo-500 text-center font-medium"></p> 
-            <div class="grid grid-cols-2 gap-6">
-                <!-- 姊姊卡片 -->
-                <div data-sibling="sister" class="sibling-card bg-pink-100 p-6 rounded-xl shadow-md hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer flex flex-col items-center space-y-3 border-b-4 border-pink-500">
-                    <span class="text-5xl">👑</span>
-                    <h3 class="text-xl font-bold text-pink-700">姊姊</h3>
-                    <p class="text-sm text-pink-600 font-medium">點擊進入</p>
-                </div>
-                <!-- 弟弟卡片 -->
-                <div data-sibling="brother" class="sibling-card bg-blue-100 p-6 rounded-xl shadow-md hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer flex flex-col items-center space-y-3 border-b-4 border-blue-500">
-                    <span class="text-5xl">🚀</span>
-                    <h3 class="text-xl font-bold text-blue-700">弟弟</h3>
-                    <p class="text-sm text-blue-600 font-medium">點擊進入</p>
-                </div>
-            </div>
+// 初始化 Firebase 應用程式
+let app;
+let db;
+let auth;
+
+// 設置日誌級別，方便調試
+if (Object.keys(firebaseConfig).length > 0) {
+  try {
+    app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    auth = getAuth(app);
+  } catch (error) {
+    console.error("Firebase initialization failed:", error);
+  }
+} else {
+  console.warn("Firebase configuration not found. App will run in mock mode.");
+}
+
+// 初始任務設定 (給姊姊和弟弟使用)
+const initialDailyTasks = [
+  { id: 1, task: "整理玩具 (Tidy up toys)", points: 10 },
+  { id: 2, task: "自己刷牙 (Brush teeth alone)", points: 5 },
+  { id: 3, task: "幫忙擺碗 (Help set the table)", points: 15 },
+  { id: 4, task: "睡前閱讀 15 分鐘 (Read for 15 min)", points: 20 },
+];
+
+/**
+ * 取得當前日期的 YYYY-MM-DD 格式字串
+ * @returns {string} 格式化的日期字串
+ */
+const getTodayDate = () => {
+  return new Date().toISOString().split('T')[0];
+};
+
+/**
+ * 取得 Firestore 公共資料的參考路徑
+ * @param {string} docId - 文件ID ('sister' 或 'brother')
+ * @returns {import('firebase/firestore').DocumentReference} 文件參考
+ */
+const getCheckinDocRef = (docId) => {
+  // 公共資料路徑: /artifacts/{appId}/public/data/checkinData/{docId}
+  const collectionPath = `/artifacts/${appId}/public/data/checkinData`;
+  return doc(db, collectionPath, docId);
+};
+
+// --- 主要應用程式組件 ---
+
+const App = () => {
+  const [user, setUser] = useState(null); // Firebase User 對象
+  const [userId, setUserId] = useState(null); // 認證後的 UID 或隨機 ID
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [selectedSibling, setSelectedSibling] = useState(null); // 'sister' or 'brother'
+  const [error, setError] = useState(null);
+
+  // 1. 認證處理
+  useEffect(() => {
+    if (!auth) {
+      console.error("Firebase Auth not initialized.");
+      setIsAuthReady(true);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        setUserId(currentUser.uid);
+      } else {
+        // 嘗試使用自定義令牌登入或匿名登入
+        try {
+          if (initialAuthToken) {
+            await signInWithCustomToken(auth, initialAuthToken);
+          } else {
+            const anonymousUser = await signInAnonymously(auth);
+            setUserId(anonymousUser.user.uid);
+          }
+        } catch (e) {
+          console.error("Authentication failed:", e);
+          // 匿名登入失敗，使用隨機 ID 作為 fallback
+          setUserId(crypto.randomUUID()); 
+        }
+      }
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribe();
+  }, [initialAuthToken]);
+
+
+  // 渲染登入介面
+  if (!isAuthReady) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+        <div className="text-center p-8 bg-white rounded-xl shadow-lg">
+          <svg className="animate-spin h-8 w-8 text-indigo-600 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p className="text-gray-600">載入中...</p>
         </div>
+      </div>
+    );
+  }
 
-        <!-- Task View: 任務與點數介面 (隱藏) -->
-        <div id="task-view" class="space-y-6 pt-4 hidden">
-            <!-- 儀表板頂部與切換按鈕 -->
-            <div class="flex justify-between items-center mb-4 p-3 bg-indigo-50 rounded-xl shadow-sm border-l-4 border-indigo-400">
-                <h2 id="current-sibling-name" class="text-2xl font-bold text-indigo-700"></h2>
-                <button id="switch-sibling-btn" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition duration-150 text-sm font-medium">
-                    切換使用者
-                </button>
-            </div>
-            <p id="task-date-display" class="text-sm text-gray-500 text-right -mt-4 mb-2"></p>
+  // 渲染應用程式
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 sm:p-8 font-inter">
+      <header className="w-full max-w-4xl text-center mb-8">
+        <h1 className="text-4xl font-extrabold text-indigo-700 tracking-tight">
+          兒童任務集點 App (點數版)
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">使用者 ID: {userId || '匿名'}</p>
+        {error && (
+          <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
+            錯誤: {error}
+          </div>
+        )}
+      </header>
 
-            <!-- 任務點數顯示區塊 -->
-            <div id="points-display" class="points-display bg-indigo-50 border-2 border-indigo-200 p-4 rounded-xl shadow-inner flex justify-between items-center transition duration-300">
-                <p class="text-lg font-semibold text-indigo-800">總點數 (未兌換):</p>
-                <span id="total-points" class="text-4xl font-extrabold text-indigo-900">0</span>
-            </div>
-
-            <!-- 獎章兌換與顯示區塊 -->
-            <div class="space-y-4 pt-4 border-t border-gray-100">
-                <h2 class="text-xl font-bold text-gray-700">🎖️ 獎章兌換中心</h2>
-                <div id="medal-center" class="space-y-3">
-                    <!-- 小獎章 -->
-                    <div class="flex justify-between items-center bg-yellow-50 p-4 rounded-xl border border-yellow-200">
-                        <div class="flex items-center space-x-3">
-                            <span class="text-3xl">🏅</span>
-                            <div class="flex flex-col">
-                                <span class="font-bold text-yellow-800">小獎章 (50 點)</span>
-                                <span id="small-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
-                            </div>
-                        </div>
-                        <!-- 按鈕組 (兌換 + 使用) -->
-                        <div class="flex items-center space-x-2">
-                            <button data-type="small" data-cost="50" 
-                                    class="redeem-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                兌換 (50 點)
-                            </button>
-                            <button data-type="small"
-                                    class="deduct-medal-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                使用 (扣除)
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- 中獎章 -->
-                    <div class="flex justify-between items-center bg-gray-200 p-4 rounded-xl border border-gray-300">
-                        <div class="flex items-center space-x-3">
-                            <span class="text-3xl">🥈</span>
-                            <div class="flex flex-col">
-                                <span class="font-bold text-gray-700">中獎章 (100 點)</span>
-                                <span id="medium-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
-                            </div>
-                        </div>
-                        <!-- 按鈕組 (兌換 + 使用) -->
-                        <div class="flex items-center space-x-2">
-                            <button data-type="medium" data-cost="100" 
-                                    class="redeem-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                兌換 (100 點)
-                            </button>
-                            <button data-type="medium"
-                                    class="deduct-medal-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                使用 (扣除)
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <!-- 大獎章 -->
-                    <div class="flex justify-between items-center bg-red-100 p-4 rounded-xl border border-red-300">
-                        <div class="flex items-center space-x-3">
-                            <span class="text-3xl">🥇</span>
-                            <div class="flex flex-col">
-                                <span class="font-bold text-red-800">大獎章 (200 點)</span>
-                                <span id="large-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
-                            </div>
-                        </div>
-                        <!-- 按鈕組 (兌換 + 使用) -->
-                        <div class="flex items-center space-x-2">
-                            <button data-type="large" data-cost="200" 
-                                    class="redeem-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                兌換 (200 點)
-                            </button>
-                            <button data-type="large"
-                                    class="deduct-medal-btn bg-red-700 hover:bg-red-800 text-white font-bold py-2 px-3 rounded-full text-xs transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed">
-                                使用 (扣除)
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 任務列表 -->
-            <div class="space-y-4 pt-4 border-t border-gray-100">
-                <h2 class="text-xl font-bold text-gray-700 border-b pb-2">待完成任務</h2>
-                <div id="chore-list" class="space-y-3 hide-scrollbar max-h-96 overflow-y-auto">
-                    <!-- 任務會透過 JavaScript 渲染到這裡 -->
-                    <p id="loading-indicator" class="text-center text-gray-500">載入任務中...</p>
-                </div>
-            </div>
-        </div>
-        
-        <!-- 訊息彈出區塊 -->
-        <div id="message-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+      <main className="w-full max-w-4xl">
+        {!selectedSibling ? (
+          <HomePage setSelectedSibling={setSelectedSibling} />
+        ) : (
+          <TaskView 
+            siblingId={selectedSibling} 
+            setSelectedSibling={setSelectedSibling} 
+            db={db} 
+            setError={setError}
+            getCheckinDocRef={getCheckinDocRef}
+          />
+        )}
+      </main>
     </div>
+  );
+};
 
-    <!-- 應用程式邏輯 (使用 LocalStorage) -->
-    <script>
-        // --- 1. 全域變數與初始化 ---
-        const STORAGE_KEY = 'KIDS_CHORE_APP_DATA';
-        const SIBLING_NAMES = { 'sister': '姊姊', 'brother': '弟弟' };
+// --- 子組件：首頁 (選擇姊姊或弟弟) ---
 
-        let appData = {};
-        let selectedSibling = null;
+const HomePage = ({ setSelectedSibling }) => {
+  const SiblingCard = ({ id, name, icon }) => (
+    <div 
+      onClick={() => setSelectedSibling(id)}
+      className="bg-white p-6 rounded-2xl shadow-xl hover:shadow-2xl transition-transform transform hover:scale-105 cursor-pointer flex flex-col items-center space-y-4 border-b-4 border-indigo-500"
+    >
+      <div className="text-6xl">{icon}</div>
+      <h2 className="text-2xl font-bold text-gray-800">{name}</h2>
+      <p className="text-indigo-600 font-medium">點擊進入任務</p>
+    </div>
+  );
 
-        // 硬編碼的預設任務列表 (分別為姊姊和弟弟)
-        const DEFAULT_CHORES_CONFIGS = {
-            sister: [
-                { name: "整理房間 (姊)", points: 10 },
-                { name: "洗碗 (姊)", points: 15 },
-                { name: "閱讀 30 分鐘 (姊)", points: 20 },
-                { name: "練習鋼琴 15 分鐘", points: 25 }
-            ],            
-            brother: [
-                { name: "整理玩具 (弟)", points: 10 },
-                { name: "倒垃圾 (弟)", points: 5 },
-                { name: "澆花", points: 10 },
-                { name: "練習寫字 10 分鐘", points: 20 }
-            ]
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-8 p-4">
+      <SiblingCard id="sister" name="👧 姊姊" icon="👑" />
+      <SiblingCard id="brother" name="👦 弟弟" icon="🚀" />
+    </div>
+  );
+};
+
+// --- 子組件：任務與點數儀表板 ---
+
+const TaskView = ({ siblingId, setSelectedSibling, db, setError, getCheckinDocRef }) => {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalContent, setModalContent] = useState({});
+
+  const siblingName = siblingId === 'sister' ? '姊姊' : '弟弟';
+  const docRef = db ? getCheckinDocRef(siblingId) : null;
+
+  // 2. 資料同步與每日重置邏輯
+  useEffect(() => {
+    if (!docRef) {
+      // Mock Data Mode
+      console.warn("Running in mock data mode.");
+      setData({
+        name: siblingName,
+        totalPoints: 50, // Mock initial points
+        dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
+        lastUpdated: getTodayDate(),
+      });
+      setLoading(false);
+      return;
+    }
+
+    const today = getTodayDate();
+
+    const unsubscribe = onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const currentData = docSnap.data();
+        let newData = currentData;
+        
+        // 檢查是否需要每日重置
+        if (currentData.lastUpdated !== today) {
+          console.log("Resetting daily tasks.");
+          newData = {
+            ...currentData,
+            dailyTasks: currentData.dailyTasks.map(t => ({ ...t, isCompleted: false })),
+            lastUpdated: today,
+          };
+          // 執行寫入以更新重置後的狀態
+          setDoc(docRef, newData, { merge: true }).catch(err => {
+            console.error("Failed to reset daily tasks:", err);
+            setError(`重置任務失敗: ${err.message}`);
+          });
+        }
+        
+        // 確保 totalPoints 存在 (首次載入舊資料時可能沒有)
+        if (typeof newData.totalPoints !== 'number') {
+            newData.totalPoints = 0;
+        }
+
+        setData(newData);
+      } else {
+        // 初始化資料
+        console.log("Initializing new document.");
+        const initialData = {
+          name: siblingName,
+          totalPoints: 0, // 初始點數
+          dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
+          lastUpdated: today,
         };
+        setDoc(docRef, initialData).catch(err => {
+          console.error("Failed to initialize document:", err);
+          setError(`初始化資料失敗: ${err.message}`);
+        });
+        setData(initialData);
+      }
+      setLoading(false);
+    }, (err) => {
+      console.error("Firestore subscription error:", err);
+      setError(`資料同步錯誤: ${err.message}`);
+      setLoading(false);
+    });
 
-        // --- 2. 工具函數 ---
+    return () => unsubscribe();
+  }, [docRef, siblingId, setError]);
 
-        // 訊息顯示工具 (取代 alert)
-        function showMessage(text, type = 'success') {
-            const container = document.getElementById('message-container');
-            const color = type === 'success' ? 'bg-green-500' : type === 'info' ? 'bg-indigo-500' : 'bg-red-500';
-            const message = document.createElement('div');
-            message.className = `p-3 rounded-lg shadow-xl text-white font-medium ${color} transition-all duration-300 transform translate-y-0`;
-            message.textContent = text;
-            
-            container.appendChild(message);
-            
-            setTimeout(() => {
-                message.classList.add('opacity-0', 'translate-y-4');
-                message.addEventListener('transitionend', () => message.remove());
-            }, 3000);
-        }
+  // 處理任務完成 (增加點數)
+  const handleTaskComplete = useCallback(async (taskId, points) => {
+    if (!data || !docRef) return;
 
-        /**
-         * 格式化今天的日期
-         */
-        function formatDate() {
-            const date = new Date();
-            const options = { 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric', 
-                weekday: 'long' 
-            };
-            return date.toLocaleDateString('zh-Hant-TW', options); 
-        }
+    const taskIndex = data.dailyTasks.findIndex(t => t.id === taskId);
+    if (taskIndex === -1 || data.dailyTasks[taskIndex].isCompleted) return;
 
-        /**
-         * 更新首頁和任務頁上的日期顯示
-         */
-        function updateDateDisplays() {
-            const dateString = formatDate();
-            const homeDisplay = document.getElementById('home-date-display');
-            const taskDisplay = document.getElementById('task-date-display');
-
-            if (homeDisplay) homeDisplay.textContent = `今天日期：${dateString}`;
-            if (taskDisplay) taskDisplay.textContent = `今天日期：${dateString}`;
-        }
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(docRef);
+        if (!docSnap.exists()) throw "Document does not exist!";
         
-        // --- 3. LocalStorage 邏輯 ---
-
-        /**
-         * 從 LocalStorage 載入資料，如果不存在則初始化。
-         */
-        function loadAppData() {
-            const dataString = localStorage.getItem(STORAGE_KEY);
-            if (dataString) {
-                appData = JSON.parse(dataString);
-            } else {
-                // 初始化預設結構 - 修正：傳入使用者 ID
-                appData = {
-                    sister: initializeSiblingDefaultData('sister'),
-                    brother: initializeSiblingDefaultData('brother')
-                };
-                saveAppData();
-                showMessage("已建立新的本地儲存資料。", 'info');
-            }
-        }
-
-        /**
-         * 儲存資料到 LocalStorage。
-         */
-        function saveAppData() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
-        }
-
-        /**
-         * 取得單一孩子的預設資料結構。
-         * @param {string} siblingId - 孩子的 ID ('sister' 或 'brother')
-         */
-        function initializeSiblingDefaultData(siblingId) {
-            const choresConfig = DEFAULT_CHORES_CONFIGS[siblingId] || []; // 獲取正確的任務清單
-            return {
-                points: 0,
-                smallMedals: 0,
-                mediumMedals: 0,
-                largeMedals: 0,
-                // 為每個任務分配一個穩定的 ID
-                chores: choresConfig.map((c, index) => ({ 
-                    id: index + 1, 
-                    name: c.name, 
-                    points: c.points, 
-                    isCompleted: false 
-                })),
-                lastUpdated: new Date().toISOString().split('T')[0] // 儲存上次更新日期
-            };
-        }
-
-        /**
-         * 檢查並重置每日任務，並檢查任務配置是否更新。
-         */
-        function checkAndResetChores(siblingId) {
-            const today = new Date().toISOString().split('T')[0];
-            const siblingData = appData[siblingId];
-            
-            // 檢查任務列表是否與當前配置不同，如果不同則用新配置覆蓋
-            const currentConfigChores = DEFAULT_CHORES_CONFIGS[siblingId];
-            if (siblingData.chores.length !== currentConfigChores.length || 
-                siblingData.chores.some((c, i) => c.name !== currentConfigChores[i].name)) {
-                
-                console.log(`偵測到任務配置更新，重置 ${siblingId} 的任務列表...`);
-                appData[siblingId] = initializeSiblingDefaultData(siblingId);
-                saveAppData();
-                showMessage(`${SIBLING_NAMES[siblingId]} 的任務配置已更新。`, 'info');
-                return; 
-            }
-
-            if (siblingData.lastUpdated !== today) {
-                console.log(`偵測到新的一天，重置 ${siblingId} 的任務...`);
-                
-                // 重置任務狀態
-                siblingData.chores = siblingData.chores.map(c => ({ 
-                    ...c, 
-                    isCompleted: false 
-                }));
-                siblingData.lastUpdated = today;
-                
-                saveAppData();
-                showMessage(`每日任務已為 ${SIBLING_NAMES[siblingId]} 重置！請重新打卡。`, 'info');
-            }
-        }
-
-        // --- 4. 渲染邏輯 ---
-
-        // 渲染應用程式的主要視圖
-        function renderApp() {
-            const homeView = document.getElementById('home-view');
-            const taskView = document.getElementById('task-view');
-            
-            updateDateDisplays();
-
-            if (selectedSibling) {
-                // 顯示任務頁
-                checkAndResetChores(selectedSibling); // 檢查並重置
-                
-                const name = SIBLING_NAMES[selectedSibling];
-                document.getElementById('current-sibling-name').textContent = `${name} 的任務儀表板`;
-                homeView.classList.add('hidden');
-                taskView.classList.remove('hidden');
-                
-                // 渲染當前孩子的數據
-                renderSiblingData(appData[selectedSibling]);
-            } else {
-                // 顯示首頁
-                taskView.classList.add('hidden');
-                homeView.classList.remove('hidden');
-            }
-        }
-
-        // 渲染所有相關數據
-        function renderSiblingData(data) {
-            renderMedalState(data);
-            renderChoreList(data.chores);
-        }
-
-        // 渲染任務列表
-        function renderChoreList(chores) {
-            const listElement = document.getElementById('chore-list');
-            listElement.innerHTML = '';
-            
-            const uncompletedChores = chores.filter(c => !c.isCompleted);
-
-            if (uncompletedChores.length === 0) {
-                listElement.innerHTML = '<p class="text-center text-gray-500 p-4 bg-green-50 rounded-lg font-semibold">今日任務已全數完成！🥳</p>';
-                return;
-            }
-
-            uncompletedChores.sort((a, b) => b.points - a.points); 
-
-            uncompletedChores.forEach(chore => {
-                const item = document.createElement('div');
-                item.className = 'flex items-center justify-between bg-white border border-gray-200 p-4 rounded-xl shadow-sm hover:shadow-md transition duration-200';
-                item.innerHTML = `
-                    <div class="flex flex-col">
-                        <span class="text-lg font-semibold text-gray-800">${chore.name}</span>
-                        <span class="text-sm text-indigo-500 font-medium">點數: +${chore.points}</span>
-                    </div>
-                    <div class="flex items-center space-x-2">
-                        <button data-id="${chore.id}" data-points="${chore.points}" 
-                                class="complete-btn bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-full text-sm shadow-md transition duration-150 active:translate-y-0.5">
-                            打卡完成
-                        </button>
-                    </div>
-                `;
-                listElement.appendChild(item);
-            });
-        }
+        const current = docSnap.data();
+        const updatedTasks = current.dailyTasks.map(t => 
+          t.id === taskId ? { ...t, isCompleted: true } : t
+        );
         
-        // 渲染點數、獎章狀態並啟用/禁用兌換/扣除按鈕
-        function renderMedalState(data) {
-            const currentPoints = data.points || 0;
-            const medals = { 
-                smallMedals: data.smallMedals || 0, 
-                mediumMedals: data.mediumMedals || 0, 
-                largeMedals: data.largeMedals || 0 
-            };
-            
-            document.getElementById('total-points').textContent = currentPoints;
+        const newTotalPoints = current.totalPoints + points;
 
-            // 點數更新視覺效果
-            const display = document.getElementById('points-display');
-            display.classList.add('scale-105');
-            setTimeout(() => display.classList.remove('scale-105'), 300);
+        transaction.update(docRef, {
+          dailyTasks: updatedTasks,
+          totalPoints: newTotalPoints,
+        });
+      });
+      
+      setModalContent({
+        title: "任務完成！",
+        message: `恭喜 ${siblingName} 完成任務，獲得 ${points} 點！`,
+        icon: "🎉",
+        color: "bg-green-500",
+      });
+      setIsModalOpen(true);
 
-            const medalTypes = [
-                { id: 'small', cost: 50, countId: 'small-medals-count' },
-                { id: 'medium', cost: 100, countId: 'medium-medals-count' },
-                { id: 'large', cost: 200, countId: 'large-medals-count' }
-            ];
+    } catch (e) {
+      console.error("Task completion failed:", e);
+      setError(`任務更新失敗: ${e.message}`);
+    }
+  }, [data, docRef, siblingName, setError, db]);
 
-            medalTypes.forEach(medal => {
-                const countElement = document.getElementById(medal.countId);
-                const redeemButton = document.querySelector(`.redeem-btn[data-type="${medal.id}"]`);
-                const deductButton = document.querySelector(`.deduct-medal-btn[data-type="${medal.id}"]`); // 找到扣除按鈕
-                
-                // 渲染數量
-                const count = medals[`${medal.id}Medals`] || 0;
-                countElement.textContent = `擁有: ${count} 個`;
-                
-                // 啟用/禁用兌換按鈕
-                if (redeemButton) {
-                    const isRedeemable = currentPoints >= medal.cost;
-                    redeemButton.disabled = !isRedeemable;
-                    redeemButton.textContent = isRedeemable ? `兌換 (${medal.cost} 點)` : `點數不足`;
-                }
-
-                // 啟用/禁用扣除按鈕 (新增)
-                if (deductButton) {
-                    const hasMedalsToDeduct = count > 0;
-                    deductButton.disabled = !hasMedalsToDeduct;
-                }
-            });
-        }
+  // 處理手動調整點數
+  const handleManualAdjust = useCallback(async (amount, type) => {
+    if (!data || !docRef || amount <= 0) return;
+    
+    try {
+      await runTransaction(db, async (transaction) => {
+        const docSnap = await transaction.get(docRef);
+        if (!docSnap.exists()) throw "Document does not exist!";
         
-        // --- 5. 事件處理器與數據更新 ---
-
-        // 任務完成邏輯 (不變)
-        function completeChore(choreId, points) {
-            const siblingData = appData[selectedSibling];
-            
-            // 找到並標記為完成
-            const choreIndex = siblingData.chores.findIndex(c => c.id === choreId);
-            if (choreIndex !== -1 && !siblingData.chores[choreIndex].isCompleted) {
-                siblingData.chores[choreIndex].isCompleted = true;
-                siblingData.points += points;
-                
-                saveAppData(); // 儲存變更
-                renderSiblingData(siblingData); // 重新渲染 UI
-                showMessage(`${SIBLING_NAMES[selectedSibling]} 完成任務！獲得 ${points} 點。`);
-            }
-        }
-
-        // 兌換獎章邏輯 (不變)
-        function redeemMedal(medalType, cost) {
-            const siblingData = appData[selectedSibling];
-            const medalKey = `${medalType}Medals`;
-
-            if (siblingData.points < cost) {
-                showMessage("點數不足，無法兌換。", 'error');
-                return;
-            }
-
-            siblingData.points -= cost;
-            siblingData[medalKey] += 1;
-
-            saveAppData(); // 儲存變更
-            renderSiblingData(siblingData); // 重新渲染 UI
-            
-            const medalNameMap = { 'small': '小', 'medium': '中', 'large': '大' };
-            const medalName = medalNameMap[medalType] || '未知';
-            showMessage(`成功兌換 1 個${medalName}獎章！花費 ${cost} 點。`);
-        }
+        const current = docSnap.data();
+        const oldPoints = current.totalPoints || 0;
+        let finalAmount = type === 'add' ? amount : -amount;
         
-        // 扣除已兌換獎章邏輯 (新增)
-        function deductMedal(medalType) {
-            const siblingData = appData[selectedSibling];
-            const medalKey = `${medalType}Medals`;
-
-            if (siblingData[medalKey] <= 0) {
-                // 這條訊息通常不會顯示，因為按鈕會被禁用
-                showMessage(`沒有 ${SIBLING_NAMES[selectedSibling]} 可供使用的獎章了！`, 'error');
-                return;
-            }
-
-            siblingData[medalKey] -= 1; // 扣除一個獎章
-
-            saveAppData(); // 儲存變更
-            renderSiblingData(siblingData); // 重新渲染 UI
-            
-            const medalNameMap = { 'small': '小', 'medium': '中', 'large': '大' };
-            const medalName = medalNameMap[medalType] || '未知';
-            showMessage(`成功使用 1 個${medalName}獎章，已從 ${SIBLING_NAMES[selectedSibling]} 的庫存扣除。`);
-        }
-
-
-        document.addEventListener('click', (e) => {
-            const button = e.target.closest('button, .sibling-card');
-            if (!button) return;
-
-            // --- 處理首頁選擇 ---
-            if (button.classList.contains('sibling-card')) {
-                selectedSibling = button.dataset.sibling;
-                renderApp();
-                return;
-            }
-            
-            // --- 處理切換使用者 ---
-            if (button.id === 'switch-sibling-btn') {
-                selectedSibling = null;
-                renderApp();
-                return;
-            }
-
-            if (!selectedSibling) return;
-
-            // --- 處理獎章兌換 ---
-            if (button.classList.contains('redeem-btn')) {
-                const medalType = button.dataset.type;
-                const cost = parseInt(button.dataset.cost, 10);
-                if (!button.disabled) {
-                    redeemMedal(medalType, cost);
-                }
-                return;
-            }
-            
-            // --- 處理獎章使用/扣除 (新增) ---
-            if (button.classList.contains('deduct-medal-btn')) {
-                const medalType = button.dataset.type;
-                // 依賴 renderMedalState 禁用按鈕，但為安全起見，邏輯中也有檢查
-                if (!button.disabled) { 
-                    deductMedal(medalType);
-                }
-                return;
-            }
-
-            // --- 處理任務完成 ---
-            if (button.classList.contains('complete-btn')) {
-                const choreId = parseInt(button.dataset.id, 10);
-                const points = parseInt(button.dataset.points, 10);
-                completeChore(choreId, points);
-            }
+        const newTotalPoints = Math.max(0, oldPoints + finalAmount); // 確保點數不低於 0
+        
+        transaction.update(docRef, {
+          totalPoints: newTotalPoints,
         });
 
+        setModalContent({
+            title: type === 'add' ? "點數增加" : "點數扣除",
+            message: `${siblingName} 的點數已更新: ${oldPoints} -> ${newTotalPoints} (${type === 'add' ? '+' : '-'} ${amount} 點)`,
+            icon: type === 'add' ? "➕" : "➖",
+            color: type === 'add' ? "bg-blue-500" : "bg-red-500",
+        });
+        setIsModalOpen(true);
+      });
+    } catch (e) {
+      console.error("Manual adjustment failed:", e);
+      setError(`手動調整點數失敗: ${e.message}`);
+    }
+  }, [data, docRef, siblingName, setError, db]);
 
-        // --- 6. 啟動應用程式 ---
-        window.onload = () => {
-            loadAppData(); // 載入或初始化本地數據
-            renderApp(); // 渲染介面
-        };
 
-        
-    </script>
-</body>
-</html>
+  if (loading || !data) {
+    return (
+      <div className="flex items-center justify-center p-12">
+        <svg className="animate-spin h-10 w-10 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      <div className="flex justify-between items-center mb-6 p-4 bg-white rounded-xl shadow-lg border-l-8 border-indigo-500">
+        <h2 className="text-3xl font-bold text-gray-700">
+          {siblingName} 的任務儀表板
+        </h2>
+        <button 
+          onClick={() => setSelectedSibling(null)}
+          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition duration-150 text-sm font-medium"
+        >
+          切換使用者
+        </button>
+      </div>
+
+      {/* 總點數顯示區 */}
+      <PointsSummary data={data} />
+
+      {/* 每日任務區 */}
+      <DailyTasks 
+        tasks={data.dailyTasks} 
+        handleTaskComplete={handleTaskComplete} 
+        siblingName={siblingName}
+      />
+
+      {/* 手動調整點數區 */}
+      <ManualPointAdjustment 
+        handleManualAdjust={handleManualAdjust} 
+      />
+      
+      {/* 自定義 Modal 訊息 */}
+      <CustomModal 
+        isOpen={isModalOpen} 
+        onClose={() => setIsModalOpen(false)} 
+        content={modalContent} 
+      />
+    </div>
+  );
+};
+
+// --- 子組件：每日任務列表 ---
+
+const DailyTasks = ({ tasks, handleTaskComplete, siblingName }) => (
+  <div className="bg-white p-6 rounded-xl shadow-lg">
+    <h3 className="text-2xl font-bold text-indigo-700 border-b pb-3 mb-4">
+      {getTodayDate()} 每日任務
+    </h3>
+    <ul className="space-y-3">
+      {tasks.map(task => (
+        <li key={task.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-lg shadow-sm transition duration-150 hover:bg-indigo-100">
+          <div className="flex items-center space-x-3">
+            <span className={`text-xl font-medium ${task.isCompleted ? 'text-green-600 line-through' : 'text-gray-700'}`}>
+              {task.task}
+            </span>
+            <span className="text-sm font-semibold text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full">
+              +{task.points} 點
+            </span>
+          </div>
+          {task.isCompleted ? (
+            <span className="text-green-600 font-bold flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              完成
+            </span>
+          ) : (
+            <button
+              onClick={() => handleTaskComplete(task.id, task.points)}
+              className="px-4 py-2 bg-indigo-500 text-white font-semibold rounded-full shadow-md hover:bg-indigo-600 transition duration-200 active:translate-y-0.5"
+            >
+              打卡
+            </button>
+          )}
+        </li>
+      ))}
+    </ul>
+  </div>
+);
+
+// --- 子組件：總點數總結 (取代月結算和獎章顯示) ---
+const PointsSummary = ({ data }) => {
+  const currentMonth = new Date().toLocaleString('zh-TW', { year: 'numeric', month: 'long' });
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-lg border-t-4 border-amber-500">
+      <h3 className="text-2xl font-bold text-amber-700 border-b pb-3 mb-4">
+        當前累積總點數
+      </h3>
+      <div className="text-center py-4">
+        <p className="text-lg font-medium text-gray-700">
+          總積分：
+        </p>
+        {/* 使用 pulse 動畫強調點數是獎勵的核心 */}
+        <p className="text-6xl font-extrabold text-amber-600 animate-pulse">
+          {data.totalPoints} 點
+        </p>
+        <p className="text-sm text-gray-500 mt-3">
+          這是您在 {currentMonth} 累積的所有點數，可用來兌換獎勵！
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// --- 子組件：手動點數調整區 ---
+const ManualPointAdjustment = ({ handleManualAdjust }) => {
+  const [amount, setAmount] = useState('');
+  // 確保 amount 永遠是數字 (0 或正整數)
+  const amountInt = parseInt(amount) || 0;
+  
+  const handleInput = (e) => {
+    // 限制只能輸入數字且不能超過 999
+    const value = e.target.value.replace(/[^0-9]/g, '');
+    setAmount(value.slice(0, 3));
+  };
+
+  const handleAdjust = (type) => {
+    if (amountInt > 0) {
+      handleManualAdjust(amountInt, type);
+      setAmount(''); // 調整後清空輸入
+    }
+  };
+
+  return (
+    <div className="bg-white p-6 rounded-xl shadow-lg border-l-4 border-indigo-500">
+      <h3 className="text-2xl font-bold text-indigo-700 border-b pb-3 mb-4">
+        手動點數調整 (管理員功能)
+      </h3>
+      <div className="flex flex-col sm:flex-row items-center space-y-3 sm:space-y-0 sm:space-x-3">
+        <input
+          type="number"
+          value={amount}
+          onChange={handleInput}
+          placeholder="點數數量 (1-999)"
+          className="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:ring-indigo-500 transition duration-150 text-lg text-center"
+          min="1"
+          max="999"
+        />
+        <button
+          onClick={() => handleAdjust('add')}
+          disabled={amountInt <= 0}
+          className="w-full sm:w-auto px-6 py-3 bg-green-500 text-white font-semibold rounded-full shadow-md hover:bg-green-600 transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed active:translate-y-0.5 whitespace-nowrap"
+        >
+          ➕ 增加
+        </button>
+        <button
+          onClick={() => handleAdjust('subtract')}
+          disabled={amountInt <= 0}
+          className="w-full sm:w-auto px-6 py-3 bg-red-500 text-white font-semibold rounded-full shadow-md hover:bg-red-600 transition duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed active:translate-y-0.5 whitespace-nowrap"
+        >
+          ➖ 扣除
+        </button>
+      </div>
+      <p className="text-xs text-gray-400 mt-3 text-center">
+        點數最低為 0，扣除時不會變成負數。
+      </p>
+    </div>
+  );
+};
+
+
+// --- 子組件：自定義 Modal (取代 alert) ---
+const CustomModal = ({ isOpen, onClose, content }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={onClose}>
+      <div 
+        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100"
+        onClick={e => e.stopPropagation()} // 阻止點擊 Modal 內容時關閉
+      >
+        <div className={`flex items-center justify-center h-16 w-16 rounded-full mx-auto mb-4 ${content.color || 'bg-blue-500'}`}>
+          <span className="text-3xl">{content.icon || '✨'}</span>
+        </div>
+        <h3 className="text-xl font-bold text-center mb-2 text-gray-800">
+          {content.title}
+        </h3>
+        <p className="text-center text-gray-600 mb-6">
+          {content.message}
+        </p>
+        <button 
+          onClick={onClose}
+          className={`w-full py-3 rounded-full font-semibold text-white transition duration-150 
+            ${content.color ? content.color.replace('bg-', 'bg-') : 'bg-indigo-500 hover:bg-indigo-600'} 
+            ${content.color ? content.color.replace('bg-', 'hover:bg-') : ''}
+          `}
+        >
+          知道了
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// 匯出 App 組件
+export default App;
