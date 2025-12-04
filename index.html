@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>兒童任務集點 App (單一 HTML)</title>
+    <title>兒童任務集點 App (本地儲存版)</title>
     <!-- 載入 Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- 載入 Google Inter 字體 -->
@@ -13,20 +13,6 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-    <!-- 載入 Firebase 核心 SDKs -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-        import { getFirestore, doc, onSnapshot, setDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-        
-        // 將 Firebase 函數附加到 window 對象，供 Babel/JSX 腳本使用
-        window.firebase = {
-            initializeApp,
-            getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, doc, onSnapshot, setDoc, runTransaction
-        };
-    </script>
 
     <style>
         /* 應用 Inter 字體 */
@@ -53,32 +39,8 @@
     <!-- 應用程式邏輯 (使用 Babel 處理 JSX) -->
     <script type="text/babel">
         const { useState, useEffect, useCallback } = React;
-        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, onSnapshot, setDoc, runTransaction } = window.firebase || {};
 
-        // --- 全域變數和 Firebase 初始化 ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chore-tracker-app';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-        let app = null;
-        let db = null;
-        let auth = null;
-        let isFirebaseConnected = false;
-
-        if (Object.keys(firebaseConfig).length > 0 && typeof initializeApp === 'function') {
-            try {
-                app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                isFirebaseConnected = true;
-                console.log("Firebase initialized successfully.");
-            } catch (error) {
-                console.error("Firebase initialization failed:", error);
-            }
-        } else {
-            console.warn("Firebase config not found. Running in local demo mode.");
-        }
-
+        // --- 常數和工具函數 ---
         const initialDailyTasks = [
             { id: 1, task: "整理玩具 (Tidy up toys)", points: 10 },
             { id: 2, task: "自己刷牙 (Brush teeth alone)", points: 5 },
@@ -94,79 +56,54 @@
         };
 
         /**
-         * 取得 Firestore 公共資料的參考路徑
+         * 從 localStorage 載入數據，如果不存在則使用預設值
          */
-        const getCheckinDocRef = (docId) => {
-            if (!db) return null;
-            // 公共資料路徑: /artifacts/{appId}/public/data/checkinData/{docId}
-            const collectionPath = `/artifacts/${appId}/public/data/checkinData`;
-            return doc(db, collectionPath, docId);
+        const loadDataFromLocalStorage = (siblingId, siblingName) => {
+            const storedData = localStorage.getItem(`points_app_${siblingId}`);
+            const today = getTodayDate();
+            
+            let data;
+            if (storedData) {
+                data = JSON.parse(storedData);
+            } else {
+                data = {
+                    name: siblingName,
+                    totalPoints: 0, 
+                    dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
+                    lastUpdated: today,
+                };
+            }
+            
+            // 每日重置邏輯
+            if (data.lastUpdated !== today) {
+                data.dailyTasks = initialDailyTasks.map(t => ({ ...t, isCompleted: false }));
+                data.lastUpdated = today;
+                // 注意：這裡只更新 data 變數，稍後會在 useEffect 中儲存
+            } else if (data.dailyTasks.length !== initialDailyTasks.length) {
+                // 如果任務列表有變動，則進行同步 (保留完成狀態，但以新的列表為主)
+                const completedTaskIds = new Set(data.dailyTasks.filter(t => t.isCompleted).map(t => t.id));
+                data.dailyTasks = initialDailyTasks.map(t => ({
+                    ...t,
+                    isCompleted: completedTaskIds.has(t.id)
+                }));
+            }
+            
+            return data;
         };
+
+        /**
+         * 儲存數據到 localStorage
+         */
+        const saveDataToLocalStorage = (siblingId, data) => {
+            localStorage.setItem(`points_app_${siblingId}`, JSON.stringify(data));
+        };
+
 
         // --- 主要應用程式組件 ---
 
         const App = () => {
-            const [userId, setUserId] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(!isFirebaseConnected); // 如果沒連 Firebase，視為認證準備就緒
             const [selectedSibling, setSelectedSibling] = useState(null);
             const [error, setError] = useState(null);
-
-            // 1. 認證處理 (僅在連接 Firebase 時運行)
-            useEffect(() => {
-                if (!isFirebaseConnected || !auth) {
-                    // 如果沒有 Firebase，直接設定一個假 ID 並標記準備就緒
-                    setUserId(crypto.randomUUID());
-                    return;
-                }
-
-                const setupAuth = async () => {
-                    const currentUser = auth.currentUser;
-                    if (currentUser) {
-                        setUserId(currentUser.uid);
-                    } else {
-                        try {
-                            if (initialAuthToken) {
-                                await signInWithCustomToken(auth, initialAuthToken);
-                            } else {
-                                const anonymousUser = await signInAnonymously(auth);
-                                setUserId(anonymousUser.user.uid);
-                            }
-                        } catch (e) {
-                            console.error("Authentication failed:", e);
-                            setUserId(crypto.randomUUID());
-                        }
-                    }
-                    setIsAuthReady(true);
-                };
-                
-                const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-                    if (currentUser) {
-                        setUserId(currentUser.uid);
-                    } else if (!userId) {
-                        setupAuth();
-                    }
-                });
-
-                if (!userId) {
-                     setupAuth();
-                }
-
-                return () => { if (auth) unsubscribe(); };
-            }, [initialAuthToken, userId]);
-
-            if (!isAuthReady) {
-                return (
-                    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-                        <div className="text-center p-8 bg-white rounded-xl shadow-lg">
-                            <svg className="animate-spin h-8 w-8 text-indigo-600 mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                            </svg>
-                            <p className="text-gray-600">連接雲端資料庫中...</p>
-                        </div>
-                    </div>
-                );
-            }
 
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 sm:p-8 font-inter">
@@ -174,10 +111,9 @@
                         <h1 className="text-4xl font-extrabold text-indigo-700 tracking-tight">
                             兒童任務集點 App
                         </h1>
-                        <p className={`text-sm mt-1 p-1 rounded-full font-medium ${isFirebaseConnected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                            {isFirebaseConnected ? '🟢 雲端同步模式' : '⚠️ 本地示範模式 (無持久儲存)'}
+                        <p className="text-sm mt-1 p-1 rounded-full font-medium bg-blue-100 text-blue-700">
+                            💾 本地儲存模式 (任務與點數將儲存在您的瀏覽器中)
                         </p>
-                        <p className="text-xs text-gray-500 mt-1">應用程式 ID: {userId || '匿名'}</p>
                         {error && (
                             <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
                                 錯誤: {error}
@@ -192,10 +128,6 @@
                             <TaskView 
                                 siblingId={selectedSibling} 
                                 setSelectedSibling={setSelectedSibling} 
-                                db={db} 
-                                setError={setError}
-                                getCheckinDocRef={getCheckinDocRef}
-                                isFirebaseConnected={isFirebaseConnected}
                             />
                         )}
                     </main>
@@ -225,135 +157,51 @@
         };
 
         // --- 子組件：任務與點數儀表板 ---
-        const TaskView = ({ siblingId, setSelectedSibling, db, setError, getCheckinDocRef, isFirebaseConnected }) => {
-            const [data, setData] = useState(null);
-            const [loading, setLoading] = useState(true);
+        const TaskView = ({ siblingId, setSelectedSibling }) => {
+            const siblingName = siblingId === 'sister' ? '姊姊' : '弟弟';
+            const [data, setData] = useState(() => loadDataFromLocalStorage(siblingId, siblingName));
             const [pulseTrigger, setPulseTrigger] = useState(0); 
 
-            const siblingName = siblingId === 'sister' ? '姊姊' : '弟弟';
-            const docRef = isFirebaseConnected ? getCheckinDocRef(siblingId) : null;
-            const today = getTodayDate();
-            
-            // 初始化/同步數據
+            // 1. 確保數據在 localStorage 中保持最新
             useEffect(() => {
-                if (!isFirebaseConnected) {
-                    // --- 本地 Demo 模式初始化 ---
-                    const mockData = JSON.parse(localStorage.getItem(`demo_${siblingId}`)) || {
-                        name: siblingName,
-                        totalPoints: 0, 
-                        dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
-                        lastUpdated: today,
-                    };
-                    
-                    // 本地模式的每日重置
-                    if (mockData.lastUpdated !== today) {
-                        mockData.dailyTasks = mockData.dailyTasks.map(t => ({ ...t, isCompleted: false }));
-                        mockData.lastUpdated = today;
-                        localStorage.setItem(`demo_${siblingId}`, JSON.stringify(mockData));
+                saveDataToLocalStorage(siblingId, data);
+            }, [data, siblingId]);
+
+            // 2. 處理每日重置和用戶切換
+            useEffect(() => {
+                // 當 siblingId 改變時，重新載入該用戶的數據
+                setData(loadDataFromLocalStorage(siblingId, siblingName));
+                
+                // 設置每日重置檢查 (在 TaskView 載入時觸發，但主要邏輯在 loadDataFromLocalStorage)
+                const checkDailyReset = () => {
+                    const currentData = loadDataFromLocalStorage(siblingId, siblingName);
+                    if (currentData.lastUpdated !== getTodayDate()) {
+                         // 重新載入，並觸發 loadDataFromLocalStorage 進行重置
+                        setData(currentData);
                     }
+                };
 
-                    setData(mockData);
-                    setLoading(false);
-                    return;
-                }
+                // 每小時檢查一次重置
+                const interval = setInterval(checkDailyReset, 60 * 60 * 1000); 
 
-                // --- 雲端同步模式初始化 ---
-                const unsubscribe = onSnapshot(docRef, (docSnap) => {
-                    if (docSnap.exists()) {
-                        const currentData = docSnap.data();
-                        let newData = currentData;
-                        
-                        // 檢查是否需要每日重置
-                        if (currentData.lastUpdated !== today) {
-                            console.log("Resetting daily tasks.");
-                            newData = {
-                                ...currentData,
-                                dailyTasks: currentData.dailyTasks.map(t => ({ ...t, isCompleted: false })),
-                                lastUpdated: today,
-                            };
-                            setDoc(docRef, newData, { merge: true }).catch(err => {
-                                console.error("Failed to reset daily tasks:", err);
-                                setError(`重置任務失敗: ${err.message}`);
-                            });
-                        }
-                        
-                        if (typeof newData.totalPoints !== 'number') {
-                            newData.totalPoints = 0;
-                        }
+                return () => clearInterval(interval);
+            }, [siblingId]);
 
-                        setData(newData);
-                    } else {
-                        // 初始化資料
-                        const initialData = {
-                            name: siblingName,
-                            totalPoints: 0, 
-                            dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
-                            lastUpdated: today,
-                        };
-                        setDoc(docRef, initialData).catch(err => {
-                            console.error("Failed to initialize document:", err);
-                            setError(`初始化資料失敗: ${err.message}`);
-                        });
-                        setData(initialData);
-                    }
-                    setLoading(false);
-                }, (err) => {
-                    console.error("Firestore subscription error:", err);
-                    setError(`資料同步錯誤: ${err.message}`);
-                    setLoading(false);
-                });
 
-                return () => unsubscribe();
-            }, [docRef, siblingId, setError, isFirebaseConnected]);
-
-            // Helper function for local updates (Demo Mode)
-            const handleLocalUpdate = useCallback((updaterFn) => {
+            // Helper function for updates
+            const handleUpdate = useCallback((updaterFn) => {
                 setData(prevData => {
                     if (!prevData) return null;
                     const newData = updaterFn(prevData);
-                    // 儲存到 localStorage
-                    localStorage.setItem(`demo_${siblingId}`, JSON.stringify(newData));
+                    // saveDataToLocalStorage 會在 useEffect 中處理
                     return newData;
                 });
                 setPulseTrigger(p => p + 1);
-            }, [siblingId]);
+            }, []);
 
-            // --- 點數操作邏輯 ---
-
-            // 1. 任務完成 (Firestore Mode)
-            const handleFirestoreTaskComplete = useCallback(async (taskId, points) => {
-                if (!data || !docRef || !db) return;
-
-                const taskIndex = data.dailyTasks.findIndex(t => t.id === taskId);
-                if (taskIndex === -1 || data.dailyTasks[taskIndex].isCompleted) return;
-
-                try {
-                    await runTransaction(db, async (transaction) => {
-                        const docSnap = await transaction.get(docRef);
-                        if (!docSnap.exists()) throw new Error("Document does not exist!");
-                        
-                        const current = docSnap.data();
-                        const updatedTasks = current.dailyTasks.map(t => 
-                            t.id === taskId ? { ...t, isCompleted: true } : t
-                        );
-                        
-                        const newTotalPoints = (current.totalPoints || 0) + points;
-
-                        transaction.update(docRef, {
-                            dailyTasks: updatedTasks,
-                            totalPoints: newTotalPoints,
-                        });
-                    });
-                    setPulseTrigger(p => p + 1); 
-                } catch (e) {
-                    console.error("Task completion failed:", e);
-                    setError(`任務更新失敗: ${e.message}`);
-                }
-            }, [data, docRef, db]);
-
-            // 1B. 任務完成 (Local Demo Mode)
-            const handleLocalTaskComplete = useCallback((taskId, points) => {
-                handleLocalUpdate(prevData => {
+            // 任務完成
+            const handleTaskComplete = useCallback((taskId, points) => {
+                handleUpdate(prevData => {
                     const taskIndex = prevData.dailyTasks.findIndex(t => t.id === taskId);
                     if (taskIndex === -1 || prevData.dailyTasks[taskIndex].isCompleted) return prevData;
 
@@ -364,52 +212,23 @@
 
                     return { ...prevData, dailyTasks: updatedTasks, totalPoints: newTotalPoints };
                 });
-            }, [handleLocalUpdate]);
+            }, [handleUpdate]);
 
-            // 2. 手動調整點數 (Firestore Mode)
-            const handleFirestoreManualAdjust = useCallback(async (amount, type) => {
-                if (!data || !docRef || amount <= 0 || !db) return;
+            // 手動調整點數
+            const handleManualAdjust = useCallback((amount, type) => {
+                if (amount <= 0) return;
                 
-                try {
-                    await runTransaction(db, async (transaction) => {
-                        const docSnap = await transaction.get(docRef);
-                        if (!docSnap.exists()) throw new Error("Document does not exist!");
-                        
-                        const current = docSnap.data();
-                        const oldPoints = current.totalPoints || 0;
-                        let finalAmount = type === 'add' ? amount : -amount;
-                        
-                        const newTotalPoints = Math.max(0, oldPoints + finalAmount);
-                        
-                        transaction.update(docRef, {
-                            totalPoints: newTotalPoints,
-                        });
-                        
-                        setPulseTrigger(p => p + 1);
-                    });
-                } catch (e) {
-                    console.error("Manual adjustment failed:", e);
-                    setError(`手動調整點數失敗: ${e.message}`);
-                }
-            }, [data, docRef, db]);
-
-            // 2B. 手動調整點數 (Local Demo Mode)
-            const handleLocalManualAdjust = useCallback((amount, type) => {
-                handleLocalUpdate(prevData => {
+                handleUpdate(prevData => {
                     const oldPoints = prevData.totalPoints || 0;
                     let finalAmount = type === 'add' ? amount : -amount;
+                    // 點數最低為 0
                     const newTotalPoints = Math.max(0, oldPoints + finalAmount);
                     return { ...prevData, totalPoints: newTotalPoints };
                 });
-            }, [handleLocalUpdate]);
+            }, [handleUpdate]);
 
-
-            // 根據模式選擇使用的處理函數
-            const taskCompleteHandler = isFirebaseConnected ? handleFirestoreTaskComplete : handleLocalTaskComplete;
-            const manualAdjustHandler = isFirebaseConnected ? handleFirestoreManualAdjust : handleLocalManualAdjust;
-
-
-            if (loading || !data) {
+            if (!data) {
+                // 數據載入中或錯誤處理
                 return (
                     <div className="flex items-center justify-center p-12">
                         <svg className="animate-spin h-10 w-10 text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -440,13 +259,13 @@
                     {/* 每日任務區 */}
                     <DailyTasks 
                         tasks={data.dailyTasks} 
-                        handleTaskComplete={taskCompleteHandler} 
+                        handleTaskComplete={handleTaskComplete} 
                         siblingName={siblingName}
                     />
 
                     {/* 手動調整點數區 */}
                     <ManualPointAdjustment 
-                        handleManualAdjust={manualAdjustHandler} 
+                        handleManualAdjust={handleManualAdjust} 
                     />
                 </div>
             );
@@ -539,6 +358,7 @@
             const amountInt = parseInt(amount) || 0;
             
             const handleInput = (e) => {
+                // 只允許數字輸入，並限制長度
                 const value = e.target.value.replace(/[^0-9]/g, '');
                 setAmount(value.slice(0, 3));
             };
@@ -546,7 +366,7 @@
             const handleAdjust = (type) => {
                 if (amountInt > 0) {
                     handleManualAdjust(amountInt, type);
-                    setAmount('');
+                    setAmount(''); // 調整後清除輸入
                 }
             };
 
