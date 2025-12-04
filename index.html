@@ -53,28 +53,30 @@
     <!-- 應用程式邏輯 (使用 Babel 處理 JSX) -->
     <script type="text/babel">
         const { useState, useEffect, useCallback } = React;
-        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, onSnapshot, setDoc, runTransaction } = window.firebase;
+        const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore, doc, onSnapshot, setDoc, runTransaction } = window.firebase || {};
 
         // --- 全域變數和 Firebase 初始化 ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-chore-tracker-app';
         const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
-        let app;
-        let db;
-        let auth;
+        let app = null;
+        let db = null;
+        let auth = null;
+        let isFirebaseConnected = false;
 
         if (Object.keys(firebaseConfig).length > 0 && typeof initializeApp === 'function') {
             try {
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
+                isFirebaseConnected = true;
                 console.log("Firebase initialized successfully.");
             } catch (error) {
                 console.error("Firebase initialization failed:", error);
             }
         } else {
-            console.warn("Firebase configuration not found or SDK not loaded. App will run in mock mode.");
+            console.warn("Firebase config not found. Running in local demo mode.");
         }
 
         const initialDailyTasks = [
@@ -104,23 +106,22 @@
         // --- 主要應用程式組件 ---
 
         const App = () => {
-            const [user, setUser] = useState(null);
             const [userId, setUserId] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [isAuthReady, setIsAuthReady] = useState(!isFirebaseConnected); // 如果沒連 Firebase，視為認證準備就緒
             const [selectedSibling, setSelectedSibling] = useState(null);
             const [error, setError] = useState(null);
 
-            // 1. 認證處理
+            // 1. 認證處理 (僅在連接 Firebase 時運行)
             useEffect(() => {
-                if (!auth) {
-                    setIsAuthReady(true);
+                if (!isFirebaseConnected || !auth) {
+                    // 如果沒有 Firebase，直接設定一個假 ID 並標記準備就緒
+                    setUserId(crypto.randomUUID());
                     return;
                 }
 
                 const setupAuth = async () => {
                     const currentUser = auth.currentUser;
                     if (currentUser) {
-                        setUser(currentUser);
                         setUserId(currentUser.uid);
                     } else {
                         try {
@@ -138,13 +139,10 @@
                     setIsAuthReady(true);
                 };
                 
-                // onAuthStateChanged is asynchronous, but setupAuth ensures a user/uid is set first
                 const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
                     if (currentUser) {
-                        setUser(currentUser);
                         setUserId(currentUser.uid);
                     } else if (!userId) {
-                        // Only run initial sign-in logic if not already signed in/handled
                         setupAuth();
                     }
                 });
@@ -164,7 +162,7 @@
                                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                             </svg>
-                            <p className="text-gray-600">載入中...</p>
+                            <p className="text-gray-600">連接雲端資料庫中...</p>
                         </div>
                     </div>
                 );
@@ -172,11 +170,14 @@
 
             return (
                 <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 sm:p-8 font-inter">
-                    <header className="w-full max-w-4xl text-center mb-8">
+                    <header className="w-full max-w-4xl text-center mb-4">
                         <h1 className="text-4xl font-extrabold text-indigo-700 tracking-tight">
-                            兒童任務集點 App (點數版)
+                            兒童任務集點 App
                         </h1>
-                        <p className="text-sm text-gray-500 mt-1">使用者 ID: {userId || '匿名'}</p>
+                        <p className={`text-sm mt-1 p-1 rounded-full font-medium ${isFirebaseConnected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                            {isFirebaseConnected ? '🟢 雲端同步模式' : '⚠️ 本地示範模式 (無持久儲存)'}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">應用程式 ID: {userId || '匿名'}</p>
                         {error && (
                             <div className="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg">
                                 錯誤: {error}
@@ -194,6 +195,7 @@
                                 db={db} 
                                 setError={setError}
                                 getCheckinDocRef={getCheckinDocRef}
+                                isFirebaseConnected={isFirebaseConnected}
                             />
                         )}
                     </main>
@@ -223,33 +225,39 @@
         };
 
         // --- 子組件：任務與點數儀表板 ---
-        const TaskView = ({ siblingId, setSelectedSibling, db, setError, getCheckinDocRef }) => {
+        const TaskView = ({ siblingId, setSelectedSibling, db, setError, getCheckinDocRef, isFirebaseConnected }) => {
             const [data, setData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [isModalOpen, setIsModalOpen] = useState(false); // 保持用於可能的錯誤訊息
-            const [modalContent, setModalContent] = useState({}); // 保持用於可能的錯誤訊息
-            const [pulseTrigger, setPulseTrigger] = useState(0); // 新增：用於觸發點數脈衝動畫
+            const [pulseTrigger, setPulseTrigger] = useState(0); 
 
             const siblingName = siblingId === 'sister' ? '姊姊' : '弟弟';
-            const docRef = db ? getCheckinDocRef(siblingId) : null;
-
-            // 2. 資料同步與每日重置邏輯
+            const docRef = isFirebaseConnected ? getCheckinDocRef(siblingId) : null;
+            const today = getTodayDate();
+            
+            // 初始化/同步數據
             useEffect(() => {
-                if (!docRef) {
-                    // Mock Data Mode
-                    console.warn("Running in mock data mode.");
-                    setData({
+                if (!isFirebaseConnected) {
+                    // --- 本地 Demo 模式初始化 ---
+                    const mockData = JSON.parse(localStorage.getItem(`demo_${siblingId}`)) || {
                         name: siblingName,
-                        totalPoints: 50, // Mock initial points
+                        totalPoints: 0, 
                         dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
-                        lastUpdated: getTodayDate(),
-                    });
+                        lastUpdated: today,
+                    };
+                    
+                    // 本地模式的每日重置
+                    if (mockData.lastUpdated !== today) {
+                        mockData.dailyTasks = mockData.dailyTasks.map(t => ({ ...t, isCompleted: false }));
+                        mockData.lastUpdated = today;
+                        localStorage.setItem(`demo_${siblingId}`, JSON.stringify(mockData));
+                    }
+
+                    setData(mockData);
                     setLoading(false);
                     return;
                 }
 
-                const today = getTodayDate();
-
+                // --- 雲端同步模式初始化 ---
                 const unsubscribe = onSnapshot(docRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const currentData = docSnap.data();
@@ -263,14 +271,12 @@
                                 dailyTasks: currentData.dailyTasks.map(t => ({ ...t, isCompleted: false })),
                                 lastUpdated: today,
                             };
-                            // 執行寫入以更新重置後的狀態
                             setDoc(docRef, newData, { merge: true }).catch(err => {
                                 console.error("Failed to reset daily tasks:", err);
                                 setError(`重置任務失敗: ${err.message}`);
                             });
                         }
                         
-                        // 確保 totalPoints 存在
                         if (typeof newData.totalPoints !== 'number') {
                             newData.totalPoints = 0;
                         }
@@ -278,10 +284,9 @@
                         setData(newData);
                     } else {
                         // 初始化資料
-                        console.log("Initializing new document.");
                         const initialData = {
                             name: siblingName,
-                            totalPoints: 0, // 初始點數
+                            totalPoints: 0, 
                             dailyTasks: initialDailyTasks.map(task => ({...task, isCompleted: false})),
                             lastUpdated: today,
                         };
@@ -299,10 +304,24 @@
                 });
 
                 return () => unsubscribe();
-            }, [docRef, siblingId, setError, db]);
+            }, [docRef, siblingId, setError, isFirebaseConnected]);
 
-            // 處理任務完成 (增加點數)
-            const handleTaskComplete = useCallback(async (taskId, points) => {
+            // Helper function for local updates (Demo Mode)
+            const handleLocalUpdate = useCallback((updaterFn) => {
+                setData(prevData => {
+                    if (!prevData) return null;
+                    const newData = updaterFn(prevData);
+                    // 儲存到 localStorage
+                    localStorage.setItem(`demo_${siblingId}`, JSON.stringify(newData));
+                    return newData;
+                });
+                setPulseTrigger(p => p + 1);
+            }, [siblingId]);
+
+            // --- 點數操作邏輯 ---
+
+            // 1. 任務完成 (Firestore Mode)
+            const handleFirestoreTaskComplete = useCallback(async (taskId, points) => {
                 if (!data || !docRef || !db) return;
 
                 const taskIndex = data.dailyTasks.findIndex(t => t.id === taskId);
@@ -325,18 +344,30 @@
                             totalPoints: newTotalPoints,
                         });
                     });
-                    
-                    // 任務成功完成，不彈出視窗，觸發點數脈衝動畫
                     setPulseTrigger(p => p + 1); 
-
                 } catch (e) {
                     console.error("Task completion failed:", e);
                     setError(`任務更新失敗: ${e.message}`);
                 }
             }, [data, docRef, db]);
 
-            // 處理手動調整點數
-            const handleManualAdjust = useCallback(async (amount, type) => {
+            // 1B. 任務完成 (Local Demo Mode)
+            const handleLocalTaskComplete = useCallback((taskId, points) => {
+                handleLocalUpdate(prevData => {
+                    const taskIndex = prevData.dailyTasks.findIndex(t => t.id === taskId);
+                    if (taskIndex === -1 || prevData.dailyTasks[taskIndex].isCompleted) return prevData;
+
+                    const updatedTasks = prevData.dailyTasks.map(t => 
+                        t.id === taskId ? { ...t, isCompleted: true } : t
+                    );
+                    const newTotalPoints = (prevData.totalPoints || 0) + points;
+
+                    return { ...prevData, dailyTasks: updatedTasks, totalPoints: newTotalPoints };
+                });
+            }, [handleLocalUpdate]);
+
+            // 2. 手動調整點數 (Firestore Mode)
+            const handleFirestoreManualAdjust = useCallback(async (amount, type) => {
                 if (!data || !docRef || amount <= 0 || !db) return;
                 
                 try {
@@ -354,15 +385,28 @@
                             totalPoints: newTotalPoints,
                         });
                         
-                        // 成功調整點數，不彈出視窗，觸發點數脈衝動畫
                         setPulseTrigger(p => p + 1);
-
                     });
                 } catch (e) {
                     console.error("Manual adjustment failed:", e);
                     setError(`手動調整點數失敗: ${e.message}`);
                 }
             }, [data, docRef, db]);
+
+            // 2B. 手動調整點數 (Local Demo Mode)
+            const handleLocalManualAdjust = useCallback((amount, type) => {
+                handleLocalUpdate(prevData => {
+                    const oldPoints = prevData.totalPoints || 0;
+                    let finalAmount = type === 'add' ? amount : -amount;
+                    const newTotalPoints = Math.max(0, oldPoints + finalAmount);
+                    return { ...prevData, totalPoints: newTotalPoints };
+                });
+            }, [handleLocalUpdate]);
+
+
+            // 根據模式選擇使用的處理函數
+            const taskCompleteHandler = isFirebaseConnected ? handleFirestoreTaskComplete : handleLocalTaskComplete;
+            const manualAdjustHandler = isFirebaseConnected ? handleFirestoreManualAdjust : handleLocalManualAdjust;
 
 
             if (loading || !data) {
@@ -396,20 +440,13 @@
                     {/* 每日任務區 */}
                     <DailyTasks 
                         tasks={data.dailyTasks} 
-                        handleTaskComplete={handleTaskComplete} 
+                        handleTaskComplete={taskCompleteHandler} 
                         siblingName={siblingName}
                     />
 
                     {/* 手動調整點數區 */}
                     <ManualPointAdjustment 
-                        handleManualAdjust={handleManualAdjust} 
-                    />
-                    
-                    {/* 自定義 Modal 訊息 (保留用於錯誤訊息或其他用途) */}
-                    <CustomModal 
-                        isOpen={isModalOpen} 
-                        onClose={() => setIsModalOpen(false)} 
-                        content={modalContent} 
+                        handleManualAdjust={manualAdjustHandler} 
                     />
                 </div>
             );
@@ -546,40 +583,6 @@
                     <p className="text-xs text-gray-400 mt-3 text-center">
                         點數最低為 0，扣除時不會變成負數。
                     </p>
-                </div>
-            );
-        };
-
-
-        // --- 子組件：自定義 Modal (取代 alert, 僅用於錯誤或其他非點數調整的提示) ---
-        const CustomModal = ({ isOpen, onClose, content }) => {
-            if (!isOpen) return null;
-
-            return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={onClose}>
-                    <div 
-                        className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm transform transition-all duration-300 scale-100"
-                        onClick={e => e.stopPropagation()}
-                    >
-                        <div className={`flex items-center justify-center h-16 w-16 rounded-full mx-auto mb-4 ${content.color || 'bg-blue-500'}`}>
-                            <span className="text-3xl">{content.icon || '✨'}</span>
-                        </div>
-                        <h3 className="text-xl font-bold text-center mb-2 text-gray-800">
-                            {content.title}
-                        </h3>
-                        <p className="text-center text-gray-600 mb-6">
-                            {content.message}
-                        </p>
-                        <button 
-                            onClick={onClose}
-                            className={`w-full py-3 rounded-full font-semibold text-white transition duration-150 
-                                ${content.color ? content.color.replace('bg-', 'bg-') : 'bg-indigo-500 hover:bg-indigo-600'} 
-                                ${content.color ? content.color.replace('bg-', 'hover:bg-') : ''}
-                            `}
-                        >
-                            知道了
-                        </button>
-                    </div>
                 </div>
             );
         };
