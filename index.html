@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>兒童任務集點 App (本地儲存)</title>
+    <!-- 載入 Tailwind CSS CDN，實現快速美觀的響應式設計 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 使用 Inter 字體 */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+        /* 隱藏原生滾動條 */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        /* 點數更新時的視覺回饋 */
+        .points-display.scale-105 {
+            transform: scale(1.05);
+            box-shadow: 0 10px 15px -3px rgba(99, 102, 241, 0.5), 0 4px 6px -2px rgba(99, 102, 41, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex flex-col items-center p-4">
+
+    <!-- 💡 配置狀態診斷區塊 (已移除 Firebase 診斷) -->
+    <div id="config-status" class="w-full max-w-xl mb-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 rounded-lg">
+        <p class="font-bold">✨ 資料儲存方式：本地儲存 (LocalStorage)</p>
+        <p class="text-sm">⚠️ **資料僅儲存在您目前的瀏覽器中，無法跨裝置同步。**</p>
+    </div>
+    <!-- 💡 診斷區塊結束 -->
+
+    <!-- 主應用程式容器 -->
+    <div id="app-container" class="w-full max-w-xl bg-white shadow-xl rounded-2xl p-6 md:p-8 space-y-6">
+        
+        <!-- 應用程式標題和使用者 ID 區塊 -->
+        <header class="text-center space-y-2">
+            <h1 class="text-3xl font-bold text-indigo-700">🏆 兒童任務集點 App</h1>
+            <div class="text-xs text-gray-500 truncate">
+                儲存金鑰: <span id="storage-key-display" class="font-mono bg-gray-100 px-2 py-1 rounded">CHORE_APP_DATA</span>
+            </div>
+            <p class="text-sm text-gray-400">點數與進度已儲存於您的瀏覽器中</p>
+        </header>
+
+        <!-- Home View: 選擇使用者介面 -->
+        <div id="home-view" class="space-y-6 pt-4">
+            <h2 class="text-2xl font-bold text-gray-700 text-center">請選擇使用者</h2>
+            <p id="home-date-display" class="text-base text-indigo-500 text-center font-medium"></p> 
+            <div class="grid grid-cols-2 gap-6">
+                <!-- 姊姊卡片 -->
+                <div data-sibling="sister" class="sibling-card bg-pink-100 p-6 rounded-xl shadow-md hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer flex flex-col items-center space-y-3 border-b-4 border-pink-500">
+                    <span class="text-5xl">👑</span>
+                    <h3 class="text-xl font-bold text-pink-700">姊姊</h3>
+                    <p class="text-sm text-pink-600 font-medium">點擊進入</p>
+                </div>
+                <!-- 弟弟卡片 -->
+                <div data-sibling="brother" class="sibling-card bg-blue-100 p-6 rounded-xl shadow-md hover:shadow-lg transition-transform transform hover:scale-105 cursor-pointer flex flex-col items-center space-y-3 border-b-4 border-blue-500">
+                    <span class="text-5xl">🚀</span>
+                    <h3 class="text-xl font-bold text-blue-700">弟弟</h3>
+                    <p class="text-sm text-blue-600 font-medium">點擊進入</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Task View: 任務與點數介面 (隱藏) -->
+        <div id="task-view" class="space-y-6 pt-4 hidden">
+            <!-- 儀表板頂部與切換按鈕 -->
+            <div class="flex justify-between items-center mb-4 p-3 bg-indigo-50 rounded-xl shadow-sm border-l-4 border-indigo-400">
+                <h2 id="current-sibling-name" class="text-2xl font-bold text-indigo-700"></h2>
+                <button id="switch-sibling-btn" class="px-3 py-1 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 transition duration-150 text-sm font-medium">
+                    切換使用者
+                </button>
+            </div>
+            <p id="task-date-display" class="text-sm text-gray-500 text-right -mt-4 mb-2"></p>
+
+            <!-- 任務點數顯示區塊 -->
+            <div id="points-display" class="points-display bg-indigo-50 border-2 border-indigo-200 p-4 rounded-xl shadow-inner flex justify-between items-center transition duration-300">
+                <p class="text-lg font-semibold text-indigo-800">總點數 (未兌換):</p>
+                <span id="total-points" class="text-4xl font-extrabold text-indigo-900">0</span>
+            </div>
+
+            <!-- 獎章兌換與顯示區塊 -->
+            <div class="space-y-4 pt-4 border-t border-gray-100">
+                <h2 class="text-xl font-bold text-gray-700">🎖️ 獎章兌換中心</h2>
+                <div id="medal-center" class="space-y-3">
+                    <!-- 小獎章 -->
+                    <div class="flex justify-between items-center bg-yellow-50 p-4 rounded-xl border border-yellow-200">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-3xl">🏅</span>
+                            <div class="flex flex-col">
+                                <span class="font-bold text-yellow-800">小獎章 (50 點)</span>
+                                <span id="small-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
+                            </div>
+                        </div>
+                        <button data-type="small" data-cost="50" 
+                                class="redeem-btn bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
+                            兌換
+                        </button>
+                    </div>
+
+                    <!-- 中獎章 -->
+                    <div class="flex justify-between items-center bg-gray-200 p-4 rounded-xl border border-gray-300">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-3xl">🥈</span>
+                            <div class="flex flex-col">
+                                <span class="font-bold text-gray-700">中獎章 (100 點)</span>
+                                <span id="medium-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
+                            </div>
+                        </div>
+                        <button data-type="medium" data-cost="100" 
+                                class="redeem-btn bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
+                            兌換
+                        </button>
+                    </div>
+                    
+                    <!-- 大獎章 -->
+                    <div class="flex justify-between items-center bg-red-100 p-4 rounded-xl border border-red-300">
+                        <div class="flex items-center space-x-3">
+                            <span class="text-3xl">🥇</span>
+                            <div class="flex flex-col">
+                                <span class="font-bold text-red-800">大獎章 (200 點)</span>
+                                <span id="large-medals-count" class="text-sm text-gray-600">擁有: 0 個</span>
+                            </div>
+                        </div>
+                        <button data-type="large" data-cost="200" 
+                                class="redeem-btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-full text-sm disabled:opacity-50 disabled:cursor-not-allowed transition duration-150">
+                            兌換
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 任務列表 -->
+            <div class="space-y-4 pt-4 border-t border-gray-100">
+                <h2 class="text-xl font-bold text-gray-700 border-b pb-2">待完成任務</h2>
+                <div id="chore-list" class="space-y-3 hide-scrollbar max-h-96 overflow-y-auto">
+                    <!-- 任務會透過 JavaScript 渲染到這裡 -->
+                    <p id="loading-indicator" class="text-center text-gray-500">載入任務中...</p>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 訊息彈出區塊 -->
+        <div id="message-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+    </div>
+
+    <!-- 應用程式邏輯 (使用 LocalStorage) -->
+    <script>
+        // --- 1. 全域變數與初始化 ---
+        const STORAGE_KEY = 'KIDS_CHORE_APP_DATA';
+        const SIBLING_NAMES = { 'sister': '姊姊', 'brother': '弟弟' };
+
+        let appData = {};
+        let selectedSibling = null;
+
+        // 硬編碼的預設任務列表
+        const DEFAULT_CHORES_CONFIG = [
+            { name: "整理房間", points: 10 },
+            { name: "洗碗", points: 15 },
+            { name: "倒垃圾", points: 5 },
+            { name: "閱讀 30 分鐘", points: 20 }
+        ];
+        // 硬編碼的預設任務列表 (分別為姊姊和弟弟)
+        const DEFAULT_CHORES_CONFIGS = {
+            sister: [
+                { name: "整理房間 (姊)", points: 10 },
+                { name: "洗碗 (姊)", points: 15 },
+                { name: "閱讀 30 分鐘 (姊)", points: 20 },
+                { name: "練習鋼琴 15 分鐘", points: 25 }
+            ],            
+            brother: [
+                { name: "整理玩具 (弟)", points: 10 },
+                { name: "倒垃圾 (弟)", points: 5 },
+                { name: "澆花", points: 10 },
+                { name: "練習寫字 10 分鐘", points: 20 }
+            ]
+        };
+
+        // --- 2. 工具函數 ---
+
+        // 訊息顯示工具 (取代 alert)
+        function showMessage(text, type = 'success') {
+            const container = document.getElementById('message-container');
+            const color = type === 'success' ? 'bg-green-500' : type === 'info' ? 'bg-indigo-500' : 'bg-red-500';
+            const message = document.createElement('div');
+            message.className = `p-3 rounded-lg shadow-xl text-white font-medium ${color} transition-all duration-300 transform translate-y-0`;
+            message.textContent = text;
+            
+            container.appendChild(message);
+            
+            setTimeout(() => {
+                message.classList.add('opacity-0', 'translate-y-4');
+                message.addEventListener('transitionend', () => message.remove());
+            }, 3000);
+        }
+
+        /**
+         * 格式化今天的日期
+         */
+        function formatDate() {
+            const date = new Date();
+            const options = { 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric', 
+                weekday: 'long' 
+            };
+            return date.toLocaleDateString('zh-Hant-TW', options); 
+        }
+
+        /**
+         * 更新首頁和任務頁上的日期顯示
+         */
+        function updateDateDisplays() {
+            const dateString = formatDate();
+            const homeDisplay = document.getElementById('home-date-display');
+            const taskDisplay = document.getElementById('task-date-display');
+
+            if (homeDisplay) homeDisplay.textContent = `今天日期：${dateString}`;
+            if (taskDisplay) taskDisplay.textContent = `今天日期：${dateString}`;
+        }
+        
+        // --- 3. LocalStorage 邏輯 ---
+
+        /**
+         * 從 LocalStorage 載入資料，如果不存在則初始化。
+         */
+        function loadAppData() {
+            const dataString = localStorage.getItem(STORAGE_KEY);
+            if (dataString) {
+                appData = JSON.parse(dataString);
+            } else {
+                // 初始化預設結構
+                appData = {
+                    sister: initializeSiblingDefaultData(),
+                    brother: initializeSiblingDefaultData()
+                };
+                saveAppData();
+                showMessage("已建立新的本地儲存資料。", 'info');
+            }
+        }
+
+        /**
+         * 儲存資料到 LocalStorage。
+         */
+        function saveAppData() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        }
+
+        /**
+         * 取得單一孩子的預設資料結構。
+         */
+        function initializeSiblingDefaultData() {
+            return {
+                points: 0,
+                smallMedals: 0,
+                mediumMedals: 0,
+                largeMedals: 0,
+                // 為每個任務分配一個穩定的 ID
+                chores: DEFAULT_CHORES_CONFIG.map((c, index) => ({ 
+                    id: index + 1, 
+                    name: c.name, 
+                    points: c.points, 
+                    isCompleted: false 
+                })),
+                lastUpdated: new Date().toISOString().split('T')[0] // 儲存上次更新日期
+            };
+        }
+
+        /**
+         * 檢查並重置每日任務。
+         */
+        function checkAndResetChores(siblingId) {
+            const today = new Date().toISOString().split('T')[0];
+            const siblingData = appData[siblingId];
+            
+            if (siblingData.lastUpdated !== today) {
+                console.log(`偵測到新的一天，重置 ${siblingId} 的任務...`);
+                
+                // 重置任務狀態
+                siblingData.chores = siblingData.chores.map(c => ({ 
+                    ...c, 
+                    isCompleted: false 
+                }));
+                siblingData.lastUpdated = today;
+                
+                saveAppData();
+                showMessage(`每日任務已為 ${SIBLING_NAMES[siblingId]} 重置！請重新打卡。`, 'info');
+            }
+        }
+
+        // --- 4. 渲染邏輯 ---
+
+        // 渲染應用程式的主要視圖
+        function renderApp() {
+            const homeView = document.getElementById('home-view');
+            const taskView = document.getElementById('task-view');
+            
+            updateDateDisplays();
+
+            if (selectedSibling) {
+                // 顯示任務頁
+                checkAndResetChores(selectedSibling); // 檢查並重置
+                
+                const name = SIBLING_NAMES[selectedSibling];
+                document.getElementById('current-sibling-name').textContent = `${name} 的任務儀表板`;
+                homeView.classList.add('hidden');
+                taskView.classList.remove('hidden');
+                
+                // 渲染當前孩子的數據
+                renderSiblingData(appData[selectedSibling]);
+            } else {
+                // 顯示首頁
+                taskView.classList.add('hidden');
+                homeView.classList.remove('hidden');
+            }
+        }
+
+        // 渲染所有相關數據
+        function renderSiblingData(data) {
+            renderMedalState(data);
+            renderChoreList(data.chores);
+        }
+
+        // 渲染任務列表
+        function renderChoreList(chores) {
+            const listElement = document.getElementById('chore-list');
+            listElement.innerHTML = '';
+            
+            const uncompletedChores = chores.filter(c => !c.isCompleted);
+
+            if (uncompletedChores.length === 0) {
+                listElement.innerHTML = '<p class="text-center text-gray-500 p-4 bg-green-50 rounded-lg font-semibold">今日任務已全數完成！🥳</p>';
+                return;
+            }
+
+            uncompletedChores.sort((a, b) => b.points - a.points); 
+
+            uncompletedChores.forEach(chore => {
+                const item = document.createElement('div');
+                item.className = 'flex items-center justify-between bg-white border border-gray-200 p-4 rounded-xl shadow-sm hover:shadow-md transition duration-200';
+                item.innerHTML = `
+                    <div class="flex flex-col">
+                        <span class="text-lg font-semibold text-gray-800">${chore.name}</span>
+                        <span class="text-sm text-indigo-500 font-medium">點數: +${chore.points}</span>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <button data-id="${chore.id}" data-points="${chore.points}" 
+                                class="complete-btn bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-full text-sm shadow-md transition duration-150 active:translate-y-0.5">
+                            打卡完成
+                        </button>
+                    </div>
+                `;
+                listElement.appendChild(item);
+            });
+        }
+        
+        // 渲染點數、獎章狀態並啟用/禁用兌換按鈕
+        function renderMedalState(data) {
+            const currentPoints = data.points || 0;
+            const medals = { 
+                smallMedals: data.smallMedals || 0, 
+                mediumMedals: data.mediumMedals || 0, 
+                largeMedals: data.largeMedals || 0 
+            };
+            
+            document.getElementById('total-points').textContent = currentPoints;
+
+            // 點數更新視覺效果
+            const display = document.getElementById('points-display');
+            display.classList.add('scale-105');
+            setTimeout(() => display.classList.remove('scale-105'), 300);
+
+            const medalTypes = [
+                { id: 'small', cost: 50, countId: 'small-medals-count' },
+                { id: 'medium', cost: 100, countId: 'medium-medals-count' },
+                { id: 'large', cost: 200, countId: 'large-medals-count' }
+            ];
+
+            medalTypes.forEach(medal => {
+                const countElement = document.getElementById(medal.countId);
+                const button = document.querySelector(`.redeem-btn[data-type="${medal.id}"]`);
+                
+                // 渲染數量
+                const count = medals[`${medal.id}Medals`] || 0;
+                countElement.textContent = `擁有: ${count} 個`;
+                
+                // 啟用/禁用按鈕
+                if (button) {
+                    const isRedeemable = currentPoints >= medal.cost;
+                    button.disabled = !isRedeemable;
+                    button.textContent = isRedeemable ? '兌換' : `點數不足 (${medal.cost} 點)`;
+                }
+            });
+        }
+        
+        // --- 5. 事件處理器與數據更新 ---
+
+        // 任務完成邏輯
+        function completeChore(choreId, points) {
+            const siblingData = appData[selectedSibling];
+            
+            // 找到並標記為完成
+            const choreIndex = siblingData.chores.findIndex(c => c.id === choreId);
+            if (choreIndex !== -1 && !siblingData.chores[choreIndex].isCompleted) {
+                siblingData.chores[choreIndex].isCompleted = true;
+                siblingData.points += points;
+                
+                saveAppData(); // 儲存變更
+                renderSiblingData(siblingData); // 重新渲染 UI
+                showMessage(`${SIBLING_NAMES[selectedSibling]} 完成任務！獲得 ${points} 點。`);
+            }
+        }
+
+        // 兌換獎章邏輯
+        function redeemMedal(medalType, cost) {
+            const siblingData = appData[selectedSibling];
+            const medalKey = `${medalType}Medals`;
+
+            if (siblingData.points < cost) {
+                showMessage("點數不足，無法兌換。", 'error');
+                return;
+            }
+
+            siblingData.points -= cost;
+            siblingData[medalKey] += 1;
+
+            saveAppData(); // 儲存變更
+            renderSiblingData(siblingData); // 重新渲染 UI
+            
+            const medalNameMap = { 'small': '小', 'medium': '中', 'large': '大' };
+            const medalName = medalNameMap[medalType] || '未知';
+            showMessage(`成功兌換 1 個${medalName}獎章！花費 ${cost} 點。`);
+        }
+
+
+        document.addEventListener('click', (e) => {
+            const button = e.target.closest('button, .sibling-card');
+            if (!button) return;
+
+            // --- 處理首頁選擇 ---
+            if (button.classList.contains('sibling-card')) {
+                selectedSibling = button.dataset.sibling;
+                renderApp();
+                return;
+            }
+            
+            // --- 處理切換使用者 ---
+            if (button.id === 'switch-sibling-btn') {
+                selectedSibling = null;
+                renderApp();
+                return;
+            }
+
+            if (!selectedSibling) return;
+
+            // --- 處理獎章兌換 ---
+            if (button.classList.contains('redeem-btn')) {
+                const medalType = button.dataset.type;
+                const cost = parseInt(button.dataset.cost, 10);
+                if (!button.disabled) {
+                    redeemMedal(medalType, cost);
+                }
+                return;
+            }
+
+            // --- 處理任務完成 ---
+            if (button.classList.contains('complete-btn')) {
+                const choreId = parseInt(button.dataset.id, 10);
+                const points = parseInt(button.dataset.points, 10);
+                completeChore(choreId, points);
+            }
+        });
+
+
+        // --- 6. 啟動應用程式 ---
+        window.onload = () => {
+            loadAppData(); // 載入或初始化本地數據
+            renderApp(); // 渲染介面
+        };
+
+        
+    </script>
+</body>
+</html>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>小兔的每日任務</title>
+<style>
+  body {
+    font-family: "Comic Sans MS", sans-serif;
+    background: linear-gradient(135deg, #FDEBEB, #FFC3A0);
+    text-align: center;
+    padding: 20px;
+  }
+  h1 {
+    color: #ff69b4;
+  }
+  .task {
+    background: #fff;
+    margin: 10px auto;
+    padding: 15px;
+    width: 250px;
+    border-radius: 15px;
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    text-align: left;
+  }
+  input[type="checkbox"] {
+    transform: scale(1.3);
+    margin-right: 8px;
+  }
+  .points {
+    margin-top: 20px;
+    font-size: 1.3em;
+    color: #e75480;
+  }
+  button {
+    margin-top: 15px;
+    padding: 10px 20px;
+    background: #ffa6c9;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 1em;
+  }
+  button:hover {
+    background: #ffb6c1;
+  }
+</style>
+</head>
+<body>
+
+<h1>🐰 小兔的每日任務</h1>
+
+<div class="task"><input type="checkbox" class="taskCheck">吃蔬菜</div>
+<div class="task"><input type="checkbox" class="taskCheck">幫忙疊衣服</div>
+<div class="task"><input type="checkbox" class="taskCheck">練字 10 分鐘</div>
+<div class="task"><input type="checkbox" class="taskCheck">寫功課</div>
+
+<div class="points">⭐ 今日星星：<span id="todayPoints">0</span></div>
+<div class="points">🌈 本週累積：<span id="weeklyPoints">0</span>/7</div>
+
+<button onclick="resetDay()">🔄 重置今天</button>
+<br>
+<button onclick="goHome()">🏠 回首頁</button>
+
+<script>
+  const today = new Date().toDateString();
+  const todayKey = 'kids1_today_' + today;
+  const weekKey = 'kids1_weeklyPoints';
+
+  const taskChecks = document.querySelectorAll('.taskCheck');
+  const todayPoints = document.getElementById('todayPoints');
+  const weeklyPoints = document.getElementById('weeklyPoints');
+
+  let weekly = parseInt(localStorage.getItem(weekKey)) || 0;
+
+  if (localStorage.getItem(todayKey)) {
+    taskChecks.forEach(chk => chk.disabled = true);
+    todayPoints.textContent = 1;
+  }
+
+  taskChecks.forEach(chk => {
+    chk.addEventListener('change', () => {
+      if ([...taskChecks].every(c => c.checked)) {
+        localStorage.setItem(todayKey, true);
+        weekly++;
+        localStorage.setItem(weekKey, weekly);
+        todayPoints.textContent = 1;
+        weeklyPoints.textContent = weekly;
+        alert("🌟 小兔好棒！今天也完成全部任務！");
+        taskChecks.forEach(c => c.disabled = true);
+      }
+    });
+  });
+
+  weeklyPoints.textContent = weekly;
+
+  function resetDay() {
+    localStorage.removeItem(todayKey);
+    taskChecks.forEach(c => {
+      c.checked = false;
+      c.disabled = false;
+    });
+    todayPoints.textContent = 0;
+  }
+
+  function goHome() {
+    window.location.href = "index.html";
+  }
+
+  const todayDate = new Date();
+  if (todayDate.getDay() === 1 && !localStorage.getItem('kids1_weekReset_' + todayDate.getFullYear() + todayDate.getMonth() + todayDate.getDate())) {
+    localStorage.setItem(weekKey, 0);
+    weekly = 0;
+    localStorage.setItem('kids1_weekReset_' + todayDate.getFullYear() + todayDate.getMonth() + todayDate.getDate(), true);
+  }
+</script>
+
+</body>
+</html>
